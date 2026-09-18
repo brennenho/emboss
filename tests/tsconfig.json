@@ -1,0 +1,6 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": { "types": ["@cloudflare/vitest-plugin/types", "node"] },
+  "include": ["./**/*.ts", "../cloudflare-env.d.ts"],
+  "exclude": ["../node_modules"]
+}

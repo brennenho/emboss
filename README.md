@@ -1,29 +1,103 @@
-# Create T3 App
+# Emboss
 
-This is a [T3 Stack](https://create.t3.gg/) project bootstrapped with `create-t3-app`.
+A single-owner home for short links, text/code/Markdown pastes, file shares,
+a scheduling redirect, and a public business card. Each tool has a stable address;
+QR exports use that address. Administration lives at `/admin`.
 
-## What's next? How do I make an app with this?
+Built on Next.js App Router, Cloudflare Workers/OpenNext, D1/Drizzle, and private
+R2. The interface uses customized official shadcn/Radix controls and bundled
+IBM Plex fonts. No registration, visitor analytics, or external auth service.
 
-We try to keep this project as simple as possible, so you can start with just the scaffolding we set up for you, and add additional things later when they become necessary.
+![Emboss paste workspace with a private Markdown preview](docs/workspace.png)
 
-If you are not familiar with the different technologies used in this project, please refer to the respective docs. If you still are in the wind, please join our [Discord](https://t3.gg/discord) and ask for help.
+## Local development
 
-- [Next.js](https://nextjs.org)
-- [NextAuth.js](https://next-auth.js.org)
-- [Prisma](https://prisma.io)
-- [Drizzle](https://orm.drizzle.team)
-- [Tailwind CSS](https://tailwindcss.com)
-- [tRPC](https://trpc.io)
+Use Node 24 and pnpm 12.4.2. No Cloudflare account is needed locally.
 
-## Learn More
+```sh
+pnpm install --frozen-lockfile
+pnpm setup:local
+pnpm preview
+```
 
-To learn more about the [T3 Stack](https://create.t3.gg/), take a look at the following resources:
+`setup:local` applies migrations, prompts for a password in the terminal, writes
+its salted verifier to ignored `.dev.vars`, and generates binding types. Any
+nonempty password is allowed, without character-count or complexity rules.
+The JSON sign-in request must fit within 8 KiB; setup checks this too.
+Open **http://127.0.0.1:8787/admin** after the build.
+`pnpm preview:start` starts an already-built Worker. Local D1/R2 state persists in
+`.wrangler/state`; do not commit it.
 
-- [Documentation](https://create.t3.gg/)
-- [Learn the T3 Stack](https://create.t3.gg/en/faq#what-learning-resources-are-currently-available) — Check out these awesome tutorials
+For faster UI iteration, `pnpm dev` serves http://localhost:3000 with the same
+emulated bindings. Verify changes with the Worker preview before treating them
+as complete. Restart the server after rotating the password.
 
-You can check out the [create-t3-app GitHub repository](https://github.com/t3-oss/create-t3-app) — your feedback and contributions are welcome!
+## Configuration and limits
 
-## How do I deploy this?
+`wrangler.jsonc` contains local defaults and explicit `DB`, `FILES`, self-service,
+login/write-rate-limit, and hourly Cron bindings. The only application secret is
+`ADMIN_PASSWORD_HASH`, set by the operator command. There is no default production
+password. Configure deployment environments separately; see [operations](docs/operations.md).
 
-Follow our deployment guides for [Vercel](https://create.t3.gg/en/deployment/vercel), [Netlify](https://create.t3.gg/en/deployment/netlify) and [Docker](https://create.t3.gg/en/deployment/docker) for more information.
+| Setting                   | Default                                              |
+| ------------------------- | ---------------------------------------------------- |
+| File upload               | 25 MiB, streamed; at most two browser transfers      |
+| Storage                   | 1 GiB, including reservations and retained deletions |
+| Paste                     | 256 KiB of UTF-8                                     |
+| Avatar                    | 2 MiB; PNG/JPEG/WebP with bounded dimensions         |
+| Session                   | Seven days, absolute expiry                          |
+| Deleted content retention | 30 days                                              |
+| Canonical origin          | `APP_BASE_URL`; HTTPS outside localhost development  |
+
+Settings may lower the operator's file, paste, and storage ceilings. Publication
+is explicit for pastes, files, and the card. Published content is **unlisted,
+not access-controlled**: anyone with its URL can open it. Disable, expiry, and
+delete revoke future access immediately; downloaded copies cannot be revoked.
+Slugs are permanent and never reused. Expiry alone does not delete file bytes.
+
+The root redirects to the configured personal website, otherwise to a published
+card, otherwise returns unavailable. Domains and public identity are configurable;
+no domain ownership or deployment is assumed.
+
+## Commands and checks
+
+```sh
+pnpm check                 # ESLint and strict TypeScript
+pnpm test                  # D1/R2/auth/lifecycle tests in workerd
+pnpm build:worker          # Complete OpenNext build
+pnpm db:generate           # Generate a migration after schema changes
+pnpm db:migrate            # Apply migrations to local D1
+pnpm admin:password --local
+```
+
+Browser tests use an explicit disposable local password fixture. Stop the preview
+first if it is running, then:
+
+```sh
+pnpm setup:test
+pnpm build:worker
+pnpm exec playwright install chromium
+pnpm test:e2e
+```
+
+`setup:test` resets **local** authentication to `Emboss local test password 2026!`
+and revokes existing local sessions. It does not reset content. Browser tests
+create local sample data, exercise desktop/mobile flows, upload 25 MiB, decode
+QR output independently, and run accessibility checks. Never use the test fixture
+on a deployed installation.
+
+The current local verification covers the built Worker. A real staging deployment
+must still verify TLS cookies, CPU limits, Cloudflare bindings/Cron, recovery,
+and a contact-app import. No free-tier cost claim is made.
+
+## Operations and contributions
+
+[Operations](docs/operations.md) covers isolated deployments, migrations, password
+recovery, metadata export, and checked full backup/restore. Keep backups and
+operator files private. `.agent-context` is intentionally ignored.
+
+Keep changes scoped, add tests for changed security/lifecycle behavior, and run
+checks plus the affected browser flows. Review copied shadcn source changes
+instead of blindly regenerating customized components.
+
+MIT licensed; see [LICENSE](LICENSE) and [third-party notices](THIRD_PARTY_NOTICES.md).

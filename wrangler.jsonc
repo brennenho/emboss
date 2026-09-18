@@ -1,0 +1,182 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "emboss",
+  "main": "custom-worker.ts",
+  "compatibility_date": "2026-09-17",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS",
+  },
+  "services": [
+    {
+      "binding": "WORKER_SELF_REFERENCE",
+      "service": "emboss",
+    },
+  ],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "emboss",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations",
+    },
+  ],
+  "r2_buckets": [
+    {
+      "binding": "FILES",
+      "bucket_name": "emboss-files",
+    },
+  ],
+  "workers_dev": false,
+  "preview_urls": false,
+  "vars": {
+    "APP_ENV": "development",
+    "APP_BASE_URL": "http://localhost:3000",
+    "SESSION_TTL_SECONDS": "604800",
+    "UPLOAD_MAX_BYTES": "26214400",
+    "STORAGE_QUOTA_BYTES": "1073741824",
+    "PASTE_MAX_BYTES": "262144",
+    "DELETION_RETENTION_DAYS": "30",
+    "READ_ONLY_MODE": "false",
+  },
+  "ratelimits": [
+    {
+      "name": "LOGIN_RATE_LIMITER",
+      "namespace_id": "1001",
+      "simple": {
+        "limit": 5,
+        "period": 60,
+      },
+    },
+    {
+      "name": "WRITE_RATE_LIMITER",
+      "namespace_id": "1002",
+      "simple": {
+        "limit": 120,
+        "period": 60,
+      },
+    },
+  ],
+  "triggers": {
+    "crons": ["17 * * * *"],
+  },
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 0.1,
+  },
+  "env": {
+    "staging": {
+      "name": "emboss-staging",
+      "workers_dev": false,
+      "preview_urls": false,
+      "services": [
+        {
+          "binding": "WORKER_SELF_REFERENCE",
+          "service": "emboss-staging",
+        },
+      ],
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "emboss-staging",
+          "database_id": "00000000-0000-0000-0000-000000000000",
+          "migrations_dir": "migrations",
+        },
+      ],
+      "r2_buckets": [
+        {
+          "binding": "FILES",
+          "bucket_name": "emboss-staging-files",
+        },
+      ],
+      "vars": {
+        "APP_ENV": "staging",
+        "APP_BASE_URL": "https://staging.example.invalid",
+        "SESSION_TTL_SECONDS": "604800",
+        "UPLOAD_MAX_BYTES": "26214400",
+        "STORAGE_QUOTA_BYTES": "1073741824",
+        "PASTE_MAX_BYTES": "262144",
+        "DELETION_RETENTION_DAYS": "30",
+        "READ_ONLY_MODE": "false",
+      },
+      "ratelimits": [
+        {
+          "name": "LOGIN_RATE_LIMITER",
+          "namespace_id": "1101",
+          "simple": {
+            "limit": 5,
+            "period": 60,
+          },
+        },
+        {
+          "name": "WRITE_RATE_LIMITER",
+          "namespace_id": "1102",
+          "simple": {
+            "limit": 120,
+            "period": 60,
+          },
+        },
+      ],
+      "triggers": {
+        "crons": ["17 * * * *"],
+      },
+    },
+    "production": {
+      "name": "emboss-production",
+      "workers_dev": false,
+      "preview_urls": false,
+      "services": [
+        {
+          "binding": "WORKER_SELF_REFERENCE",
+          "service": "emboss-production",
+        },
+      ],
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "emboss-production",
+          "database_id": "00000000-0000-0000-0000-000000000000",
+          "migrations_dir": "migrations",
+        },
+      ],
+      "r2_buckets": [
+        {
+          "binding": "FILES",
+          "bucket_name": "emboss-production-files",
+        },
+      ],
+      "vars": {
+        "APP_ENV": "production",
+        "APP_BASE_URL": "https://production.example.invalid",
+        "SESSION_TTL_SECONDS": "604800",
+        "UPLOAD_MAX_BYTES": "26214400",
+        "STORAGE_QUOTA_BYTES": "1073741824",
+        "PASTE_MAX_BYTES": "262144",
+        "DELETION_RETENTION_DAYS": "30",
+        "READ_ONLY_MODE": "false",
+      },
+      "ratelimits": [
+        {
+          "name": "LOGIN_RATE_LIMITER",
+          "namespace_id": "1201",
+          "simple": {
+            "limit": 5,
+            "period": 60,
+          },
+        },
+        {
+          "name": "WRITE_RATE_LIMITER",
+          "namespace_id": "1202",
+          "simple": {
+            "limit": 120,
+            "period": 60,
+          },
+        },
+      ],
+      "triggers": {
+        "crons": ["17 * * * *"],
+      },
+    },
+  },
+}

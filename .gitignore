@@ -44,3 +44,16 @@ yarn-error.log*
 
 # idea files
 .idea
+
+# local planning and Cloudflare development state
+/.agent-context/
+/.open-next/
+/.wrangler/
+/cloudflare-env.d.ts
+.dev.vars
+.dev.vars.*
+!.dev.vars.example
+
+/test-results/
+/playwright-report/
+/backups/

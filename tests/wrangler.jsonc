@@ -1,0 +1,36 @@
+{
+  "name": "emboss-tests",
+  "main": "worker.ts",
+  "compatibility_date": "2026-09-17",
+  "compatibility_flags": ["nodejs_compat"],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "emboss-tests",
+      "database_id": "local-tests",
+    },
+  ],
+  "r2_buckets": [{ "binding": "FILES", "bucket_name": "emboss-tests" }],
+  "ratelimits": [
+    {
+      "name": "LOGIN_RATE_LIMITER",
+      "namespace_id": "9001",
+      "simple": { "limit": 5, "period": 60 },
+    },
+    {
+      "name": "WRITE_RATE_LIMITER",
+      "namespace_id": "9002",
+      "simple": { "limit": 120, "period": 60 },
+    },
+  ],
+  "vars": {
+    "APP_ENV": "development",
+    "APP_BASE_URL": "http://localhost:3000",
+    "SESSION_TTL_SECONDS": "604800",
+    "UPLOAD_MAX_BYTES": "26214400",
+    "STORAGE_QUOTA_BYTES": "1073741824",
+    "PASTE_MAX_BYTES": "262144",
+    "DELETION_RETENTION_DAYS": "30",
+    "READ_ONLY_MODE": "false",
+  },
+}
