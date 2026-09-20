@@ -32,7 +32,7 @@ export async function api<T>(
     throw new ApiError(
       0,
       "OFFLINE",
-      "Could not reach the server. Your changes are still here; check your connection and retry.",
+      "Connection failed. Check your network and retry. Your edits are still here.",
     );
   }
   if (!response.ok) {

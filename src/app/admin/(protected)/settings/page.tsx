@@ -3,6 +3,7 @@ import { ownerSettings } from "@/server/owner";
 import { storageUsage } from "@/server/storage/uploads";
 import { config } from "@/server/config";
 import { SettingsWorkspace } from "@/features/settings/settings-workspace";
+export const metadata = { title: "Settings" };
 export default async function Page() {
   const { env, session } = await pageOwner();
   const [settings, usage] = await Promise.all([
@@ -12,7 +13,6 @@ export default async function Page() {
   const c = config(env);
   return (
     <SettingsWorkspace
-      key={settings.revision}
       data={settings}
       origin={c.origin}
       usage={usage!}
@@ -22,6 +22,11 @@ export default async function Page() {
         paste: c.PASTE_MAX_BYTES,
       }}
       readOnly={c.READ_ONLY_MODE === "true"}
+      passwordCommand={
+        c.APP_ENV === "development"
+          ? "pnpm admin:password --local"
+          : `pnpm admin:password --env ${c.APP_ENV}`
+      }
       expiresAt={new Date(session.expiresAt).toISOString()}
     />
   );

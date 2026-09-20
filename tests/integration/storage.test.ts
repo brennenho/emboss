@@ -18,6 +18,8 @@ import {
   attachment,
 } from "../../src/server/storage/downloads";
 import {
+  changeResourceState,
+  listResources,
   deleteResource,
   updateResource,
 } from "../../src/server/resource-store";
@@ -54,9 +56,50 @@ const png = new Uint8Array(
   ),
 );
 describe("streamed private file lifecycle", () => {
+  it("reuses a deleted file address while retaining and then purging only the old binary", async () => {
+    const old = await initiateUpload(
+      env,
+      { filename: "old.txt", title: "Old file", bytes: 3, slug: "again" },
+      crypto.randomUUID(),
+    );
+    await transferUpload(env, old.uploadId, request(new Uint8Array([1, 2, 3])));
+    const oldPublished = await publish(old.uploadId);
+    const oldFile = (await findFile(env, oldPublished.slug))!;
+    await deleteResource(env, "file", oldPublished.id, oldPublished.revision);
+    const replacement = await initiateUpload(
+      env,
+      { filename: "new.txt", title: "New file", bytes: 2, slug: "again" },
+      crypto.randomUUID(),
+    );
+    expect(await findFile(env, "again")).toBeNull();
+    await transferUpload(
+      env,
+      replacement.uploadId,
+      request(new Uint8Array([8, 9])),
+    );
+    await publish(replacement.uploadId);
+    expect((await findFile(env, "again"))?.id).toBe(replacement.uploadId);
+    expect(await env.FILES.head(oldFile.object_key)).not.toBeNull();
+    await maintenance(env, Date.now() + 31 * 86400000);
+    expect(await env.FILES.head(oldFile.object_key)).toBeNull();
+    const file = (await findFile(env, "again"))!;
+    expect(file.id).toBe(replacement.uploadId);
+    const response = await serveBlob(
+      env,
+      file,
+      new Request("http://localhost:3000/f/again/download"),
+      file.original_filename,
+    );
+    expect(new Uint8Array(await response.arrayBuffer())).toEqual(
+      new Uint8Array([8, 9]),
+    );
+  });
   it("streams 25 MiB, requires publication, and returns identical bytes and ranges", async () => {
     const size = 25 * 1024 ** 2,
       item = await initiation(size);
+    expect(item.resource!.slug).toMatch(
+      /^[23456789abcdefghjkmnpqrstuvwxyz]{4}$/,
+    );
     const bytes = new Uint8Array(size);
     for (let i = 0; i < bytes.length; i++) bytes[i] = i % 251;
     await transferUpload(env, item.uploadId, request(bytes));
@@ -320,4 +363,42 @@ describe("streamed private file lifecycle", () => {
     ).toBe("pending_delete");
     expect(await findFile(env, item.resource!.slug)).toBeNull();
   });
+});
+
+it("visibility requires a ready upload and lists projected file metadata", async () => {
+  const upload = await initiation(3);
+  await expect(
+    changeResourceState(env, "file", upload.uploadId, {
+      state: "active",
+      expectedRevision: 1,
+    }),
+  ).rejects.toMatchObject({ code: "UPLOAD_NOT_READY" });
+  await transferUpload(
+    env,
+    upload.uploadId,
+    request(new Uint8Array([1, 2, 3])),
+  );
+  const published = await changeResourceState(env, "file", upload.uploadId, {
+    state: "active",
+    expectedRevision: 1,
+  });
+  const prepare = vi.spyOn(env.DB, "prepare");
+  const list = await listResources(env, "file", {
+    q: published.slug,
+    limit: 100,
+  });
+  expect(prepare).toHaveBeenCalledTimes(1);
+  expect(list.items).toHaveLength(1);
+  expect(list.items[0]).toMatchObject({
+    id: published.id,
+    bytes: 3,
+    filename: "notes 🫖.txt",
+    uploadState: "ready",
+  });
+  prepare.mockRestore();
+  await changeResourceState(env, "file", upload.uploadId, {
+    state: "disabled",
+    expectedRevision: published.revision,
+  });
+  expect(await findFile(env, published.slug)).toBeNull();
 });

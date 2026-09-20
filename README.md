@@ -8,7 +8,7 @@ Built on Next.js App Router, Cloudflare Workers/OpenNext, D1/Drizzle, and privat
 R2. The interface uses customized official shadcn/Radix controls and bundled
 IBM Plex fonts. No registration, visitor analytics, or external auth service.
 
-![Emboss paste workspace with a private Markdown preview](docs/workspace.png)
+![Emboss link workspace with the shared industrial theme and editor](docs/workspace.png)
 
 ## Local development
 
@@ -53,7 +53,15 @@ Settings may lower the operator's file, paste, and storage ceilings. Publication
 is explicit for pastes, files, and the card. Published content is **unlisted,
 not access-controlled**: anyone with its URL can open it. Disable, expiry, and
 delete revoke future access immediately; downloaded copies cannot be revoked.
-Slugs are permanent and never reused. Expiry alone does not delete file bytes.
+Generated addresses use four random lowercase letters or numbers, excluding
+`0`, `1`, `i`, `l`, and `o`. Custom addresses are optional. An item keeps its address
+while it exists; deleting it releases the address for reuse. Old links and QR
+codes then lead to the replacement item. Expiry alone does not release an address
+or delete file bytes.
+
+Editors show Saved, Saving, or Unsaved changes. Saving preserves newer typing;
+Disable and Unpublish revoke access without saving unfinished edits. Changes
+from another tab trigger a revision conflict instead of overwriting saved work.
 
 The root redirects to the configured personal website, otherwise to a published
 card, otherwise returns unavailable. Domains and public identity are configurable;

@@ -5,6 +5,7 @@ import type { D1Migration } from "@cloudflare/vitest-plugin";
 import type { Env } from "../../src/server/config";
 import {
   readCard,
+  unpublishCard,
   saveCard,
   publicCard,
   readScheduling,
@@ -18,6 +19,7 @@ import { maintenance } from "../../src/server/maintenance";
 import {
   createResource,
   deleteResource,
+  publicResource,
 } from "../../src/server/resource-store";
 const env = bindings as unknown as Env & { TEST_MIGRATIONS: D1Migration[] };
 beforeAll(async () => {
@@ -121,7 +123,7 @@ describe("configuration, vCard, and portable export", () => {
     ).toBe(false);
     expect(response.headers.get("Cache-Control")).toBe("no-store");
   });
-  it("purges deleted text content but retains permanent tombstones and respects read-only maintenance", async () => {
+  it("purges deleted text without affecting a reused address and respects read-only maintenance", async () => {
     const item = await createResource(
       env,
       "paste",
@@ -134,7 +136,24 @@ describe("configuration, vCard, and portable export", () => {
       },
       crypto.randomUUID(),
     );
+    expect(item.slug).toMatch(/^[23456789abcdefghjkmnpqrstuvwxyz]{4}$/);
     await deleteResource(env, "paste", item.id, 1);
+    const replacement = await createResource(
+      env,
+      "paste",
+      {
+        title: "New note",
+        slug: item.slug,
+        state: "active",
+        expiresAt: null,
+        body: "Keep this body",
+        format: "text",
+      },
+      crypto.randomUUID(),
+    );
+    expect((await publicResource(env, "paste", item.slug))?.id).toBe(
+      replacement.id,
+    );
     const later = Date.now() + 31 * 86400000;
     await maintenance({ ...env, READ_ONLY_MODE: "true" }, later);
     expect(
@@ -153,6 +172,14 @@ describe("configuration, vCard, and portable export", () => {
         .bind(item.id)
         .first("slug"),
     ).toBe(item.slug);
+    expect((await publicResource(env, "paste", item.slug))?.id).toBe(
+      replacement.id,
+    );
+    expect(
+      await env.DB.prepare("SELECT body FROM pastes WHERE resource_id=?")
+        .bind(replacement.id)
+        .first("body"),
+    ).toBe("Keep this body");
   });
   it("enforces operator ceilings and rejects a looping root redirect", async () => {
     const input = {
@@ -172,4 +199,32 @@ describe("configuration, vCard, and portable export", () => {
       saveSettings(env, { ...input, websiteUrl: "http://localhost:3000/" }),
     ).rejects.toMatchObject({ status: 400 });
   });
+});
+
+it("unpublishes without rewriting card details or links and rejects stale revisions", async () => {
+  const current = await readCard(env);
+  const { revision, updatedAt: _at, ...details } = current;
+  const published = await saveCard(
+    env,
+    cardSchema.parse({
+      ...details,
+      displayName: "Saved identity",
+      links: [{ label: "Saved link", url: "https://example.org" }],
+      published: true,
+      expectedRevision: revision,
+    }),
+  );
+  await expect(unpublishCard(env, revision)).rejects.toMatchObject({
+    status: 409,
+  });
+  expect(await publicCard(env)).not.toBeNull();
+  const hidden = await unpublishCard(env, published.revision);
+  expect(hidden).toMatchObject({
+    displayName: published.displayName,
+    links: published.links,
+    avatarBlobId: published.avatarBlobId,
+    revision: published.revision + 1,
+    published: false,
+  });
+  expect(await publicCard(env)).toBeNull();
 });

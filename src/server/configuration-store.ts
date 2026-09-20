@@ -20,7 +20,7 @@ const conflict = () =>
   new AppError(
     409,
     "CONFLICT",
-    "This configuration changed in another tab. Reload before saving.",
+    "Changed in another tab. Reload before saving.",
   );
 export async function readScheduling(env: Env): Promise<SchedulingData> {
   const row = await database(env).select().from(scheduling).get();
@@ -75,6 +75,15 @@ export async function readCard(env: Env): Promise<CardData> {
 export async function publicCard(env: Env) {
   const card = await readCard(env);
   return card.published ? card : null;
+}
+export async function unpublishCard(env: Env, revision: number) {
+  const row = await env.DB.prepare(
+    "UPDATE business_card SET published=0,revision=revision+1,updated_at=? WHERE id=1 AND revision=? RETURNING id",
+  )
+    .bind(Date.now(), revision)
+    .first();
+  if (!row) throw conflict();
+  return readCard(env);
 }
 export async function saveCard(env: Env, input: z.infer<typeof cardSchema>) {
   const now = Date.now(),
@@ -149,7 +158,7 @@ export async function saveSettings(
     throw new AppError(
       400,
       "VALIDATION",
-      "Limits cannot exceed the operator ceilings.",
+      "Choose limits within the maximum values shown.",
     );
   if (input.websiteUrl) {
     const url = new URL(input.websiteUrl);
@@ -157,7 +166,7 @@ export async function saveSettings(
       throw new AppError(
         400,
         "VALIDATION",
-        "Choose a website other than this root address.",
+        "Choose a website other than your site address.",
         { websiteUrl: "This would redirect back to itself." },
       );
   }

@@ -11,13 +11,13 @@ import { saveScheduling } from "@/server/configuration-store";
 import { readScheduling } from "@/server/configuration-store";
 export const dynamic = "force-dynamic";
 export function GET(request: Request) {
-  return endpoint(async () => {
+  return endpoint("GET /api/admin/scheduling", async () => {
     const { env } = await ownerContext(request);
     return json(await readScheduling(env));
   });
 }
 export function PATCH(request: Request) {
-  return endpoint(async () => {
+  return endpoint("PATCH /api/admin/scheduling", async () => {
     const { env } = await ownerContext(request);
     checkIntent(request, env);
     await checkWrite(env);

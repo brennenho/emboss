@@ -1,5 +1,4 @@
 "use client";
-import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Plus, ArrowUp, ArrowDown, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -7,16 +6,14 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { FormField, fieldProps } from "@/components/patterns/form-field";
 import { ToggleField } from "@/components/patterns/toggle-field";
-import { useEditorGuard } from "@/components/patterns/navigation-guard";
-import {
-  MutationFeedback,
-  useMutation,
-} from "@/components/patterns/mutation-feedback";
+import { MutationFeedback } from "@/components/patterns/mutation-feedback";
 import { UploadControl } from "@/components/patterns/upload-control";
 import { AddressPlate, ShareDialog } from "@/components/sharing/share-dialog";
 import { StatusBadge } from "@/components/patterns/resource-controls";
 import { BusinessCardView } from "./business-card-view";
 import type { CardData } from "@/shared/configuration";
+import { useEditor } from "@/components/patterns/use-editor";
+import { EditorActions } from "@/components/patterns/editor-actions";
 import { api } from "@/shared/client-api";
 const fields = [
   ["displayName", "Display name", 100],
@@ -27,7 +24,7 @@ const fields = [
   ["publicPhone", "Public phone", 50],
 ] as const;
 export function CardWorkspace({
-  data,
+  data: incoming,
   origin,
   schedulingEnabled,
   maxAvatarBytes,
@@ -37,21 +34,30 @@ export function CardWorkspace({
   schedulingEnabled: boolean;
   maxAvatarBytes: number;
 }) {
-  const [form, setForm] = useState(data);
-  const router = useRouter(),
-    mutation = useMutation();
-  useEditorGuard(JSON.stringify(form) !== JSON.stringify(data));
+  const editor = useEditor(incoming, (record) => record);
+  const { form, setForm, saved: data, dirty, mutation } = editor;
+  const router = useRouter();
   const url = origin + "/contact";
   async function save(published: boolean) {
-    await mutation.run(async () => {
+    const saved = await editor.save(async () => {
       const { revision, updatedAt: _at, ...values } = form;
-      await api("/api/admin/business-card", "PATCH", {
+      return api<CardData>("/api/admin/business-card", "PATCH", {
         ...values,
         published,
         expectedRevision: revision,
       });
-      router.refresh();
     });
+    if (saved) router.refresh();
+  }
+  async function unpublish() {
+    const saved = await editor.save(
+      () =>
+        api<CardData>("/api/admin/business-card/unpublish", "PATCH", {
+          expectedRevision: data.revision,
+        }),
+      true,
+    );
+    if (saved) router.refresh();
   }
   function move(index: number, offset: number) {
     const links = [...form.links];
@@ -66,7 +72,6 @@ export function CardWorkspace({
       <header className="workspace-header">
         <div>
           <h1>Business card</h1>
-          <p>A simple introduction, always at the same address.</p>
         </div>
         <StatusBadge state={data.published ? "active" : "draft"} />
       </header>
@@ -78,14 +83,36 @@ export function CardWorkspace({
             void save(data.published);
           }}
         >
+          <EditorActions dirty={dirty} pending={mutation.pending}>
+            <Button disabled={mutation.pending}>
+              {mutation.pending ? "Saving…" : "Save changes"}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={mutation.pending}
+              onClick={() => void (data.published ? unpublish() : save(true))}
+            >
+              {data.published ? "Unpublish card" : "Publish card"}
+            </Button>
+            {mutation.error?.status === 409 && (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  if (window.confirm("Reload and discard your edits?"))
+                    window.location.reload();
+                }}
+              >
+                Reload
+              </Button>
+            )}
+          </EditorActions>
           <MutationFeedback
             {...mutation}
             onReauthenticated={() => mutation.setError(null)}
           />
           <h2>Public details</h2>
-          <p className="muted">
-            Only the details you enter here appear on your card.
-          </p>
           {fields.map(([name, label, max]) => (
             <FormField
               key={name}
@@ -115,11 +142,11 @@ export function CardWorkspace({
           <FormField
             id="intro"
             label="Introduction"
-            help="Up to 600 characters."
+            help="600 characters maximum."
             error={mutation.error?.fields?.intro}
           >
             <Textarea
-              {...fieldProps("intro", mutation.error?.fields)}
+              {...fieldProps("intro", mutation.error?.fields, true)}
               value={form.intro}
               onChange={(e) => setForm({ ...form, intro: e.target.value })}
               maxLength={600}
@@ -228,6 +255,11 @@ export function CardWorkspace({
                       aria-invalid={
                         !!mutation.error?.fields?.[`links.${index}.${key}`]
                       }
+                      aria-describedby={
+                        mutation.error?.fields?.[`links.${index}.${key}`]
+                          ? `link-${index}-${key}-error`
+                          : undefined
+                      }
                     />
                   </FormField>
                 ))}
@@ -239,45 +271,22 @@ export function CardWorkspace({
             label="Include scheduling"
             help={
               schedulingEnabled
-                ? "Show a link to /meet on your card."
-                : "The button appears once scheduling is enabled."
+                ? "Add a booking button to your card."
+                : "Enable scheduling to show the booking button."
             }
             checked={form.showScheduling}
             onChange={(v) => setForm({ ...form, showScheduling: v })}
           />
-          <div className="form-actions">
-            <Button disabled={mutation.pending}>
-              {mutation.pending ? "Saving…" : "Save changes"}
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              disabled={mutation.pending}
-              onClick={() => void save(!data.published)}
-            >
-              {data.published ? "Unpublish card" : "Publish card"}
-            </Button>
-            {mutation.error?.status === 409 && (
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => {
-                  if (window.confirm("Reload and discard your edits?"))
-                    router.refresh();
-                }}
-              >
-                Reload
-              </Button>
-            )}
-          </div>
+
           <p className="muted">
-            The published card changes only when you save. Anyone with the
-            address can view it.
+            Anyone with the address can view your published card.
           </p>
         </form>
         <aside className="form-stack min-w-0">
           <div>
-            <p className="section-label">Live preview · unsaved edits</p>
+            <p className="section-label">
+              Preview{dirty ? " · Unsaved changes" : ""}
+            </p>
             <BusinessCardView
               card={form}
               schedulingEnabled={schedulingEnabled}

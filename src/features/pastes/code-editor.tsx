@@ -47,16 +47,19 @@ export default function CodeEditor({
   value,
   language,
   onChange,
+  error,
 }: {
   value: string;
   language: string;
   onChange: (value: string) => void;
+  error?: string;
 }) {
   const host = useRef<HTMLDivElement>(null),
     view = useRef<EditorView | null>(null),
     callback = useRef(onChange),
     initial = useRef(value),
-    compartment = useRef(new Compartment());
+    compartment = useRef(new Compartment()),
+    accessibility = useRef(new Compartment());
   useEffect(() => {
     callback.current = onChange;
   }, [onChange]);
@@ -75,15 +78,13 @@ export default function CodeEditor({
           syntaxHighlighting(defaultHighlightStyle),
           EditorView.lineWrapping,
           compartment.current.of([]),
-          EditorView.contentAttributes.of({
-            "aria-label": "Paste content",
-            "aria-describedby": "body-help",
-          }),
+          accessibility.current.of([]),
           EditorView.theme({
-            "&": { minHeight: "360px", fontSize: "13px" },
+            "&": { height: "clamp(340px,44dvh,480px)", fontSize: "13px" },
+            ".cm-scroller": { overflow: "auto" },
             ".cm-content": {
               fontFamily: "var(--font-plex-mono)",
-              minHeight: "360px",
+              minHeight: "100%",
             },
             ".cm-gutters": {
               background: "var(--background)",
@@ -108,6 +109,18 @@ export default function CodeEditor({
       editor.destroy();
     };
   }, []);
+  useEffect(() => {
+    view.current?.dispatch({
+      effects: accessibility.current.reconfigure(
+        EditorView.contentAttributes.of({
+          id: "body",
+          "aria-label": "Content",
+          "aria-invalid": String(!!error),
+          "aria-describedby": error ? "body-help body-error" : "body-help",
+        }),
+      ),
+    });
+  }, [error]);
   useEffect(() => {
     let active = true;
     void languageExtension(language).then((extension) => {

@@ -5,6 +5,7 @@ import { createReadStream } from "node:fs";
 import { createHash } from "node:crypto";
 import ts from "typescript";
 import { z } from "zod";
+import { operatorFailureHint } from "../src/shared/diagnostics";
 export const args = process.argv.slice(2);
 export function argument(name: string) {
   const index = args.indexOf(name);
@@ -33,17 +34,20 @@ export function wrangler(command: string[], stdin?: string): Promise<string> {
       env: { ...process.env, WRANGLER_SEND_METRICS: "false" },
     });
     let output = "";
+    let diagnostic = "";
     child.stdout.on("data", (data: Buffer) => {
       output += data.toString();
     });
-    child.stderr.on("data", () => {});
+    child.stderr.on("data", (data: Buffer) => {
+      diagnostic = (diagnostic + data.toString()).slice(-32768);
+    });
     child.on("error", reject);
     child.on("close", (code) =>
       code === 0
         ? resolve(output)
         : reject(
             new Error(
-              `Wrangler ${command.slice(0, 2).join(" ")} failed (exit ${code}). No backup/restore success has been recorded.`,
+              `Wrangler ${command.slice(0, 2).join(" ")} failed (exit ${code}). ${operatorFailureHint(diagnostic)} No backup/restore success has been recorded.`,
             ),
           ),
     );

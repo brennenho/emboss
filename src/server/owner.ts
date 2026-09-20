@@ -1,4 +1,5 @@
 import "server-only";
+import { cache } from "react";
 import { ownerContext } from "./runtime";
 import { database } from "./db";
 import { installation } from "./db/schema";
@@ -13,11 +14,15 @@ import {
   revisionSchema,
   type ResourceKind,
 } from "@/shared/resources";
-export async function ownerSettings(request?: Request) {
+async function readOwnerSettings(request?: Request) {
   const { env } = await ownerContext(request);
   const settings = await database(env).select().from(installation).get();
   if (!settings) throw new Error("Missing installation");
   return settings;
+}
+const pageSettings = cache(() => readOwnerSettings());
+export function ownerSettings(request?: Request) {
+  return request ? readOwnerSettings(request) : pageSettings();
 }
 export async function ownerList(
   kind: ResourceKind,

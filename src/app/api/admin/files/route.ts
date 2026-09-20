@@ -11,7 +11,7 @@ import { idempotencyKey } from "@/server/resource-store";
 import { initiateUpload, uploadSchema } from "@/server/storage/uploads";
 export const dynamic = "force-dynamic";
 export function GET(request: Request) {
-  return endpoint(async () =>
+  return endpoint("GET /api/admin/files", async () =>
     json(
       await ownerList(
         "file",
@@ -22,7 +22,7 @@ export function GET(request: Request) {
   );
 }
 export function POST(request: Request) {
-  return endpoint(async () => {
+  return endpoint("POST /api/admin/files", async () => {
     const { env } = await ownerContext(request);
     checkIntent(request, env);
     await checkWrite(env);

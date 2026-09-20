@@ -19,8 +19,10 @@ export function StatusBadge({ state }: { state: string }) {
   return (
     <Badge
       variant="outline"
-      className={state === "active" ? "text-success" : "text-muted-foreground"}
+      className="status-badge gap-1.5 border-[var(--status-border)] bg-[var(--status-bg)] font-mono text-[11px] font-normal tracking-wide text-[var(--status-fg)] uppercase"
+      data-state={state}
     >
+      <span className="status-indicator" aria-hidden="true" />
       {state.replaceAll("_", " ")}
     </Badge>
   );
@@ -44,10 +46,12 @@ export function ExpiryField({
   value,
   onChange,
   error,
+  showOptionalHint = true,
 }: {
   value: string;
   onChange: (value: string) => void;
   error?: string;
+  showOptionalHint?: boolean;
 }) {
   const hydrated = useSyncExternalStore(
     subscribe,
@@ -58,7 +62,7 @@ export function ExpiryField({
     <FormField
       id="expiresAt"
       label="Expires"
-      help={`Optional · ${hydrated ? Intl.DateTimeFormat().resolvedOptions().timeZone : "local time"}`}
+      help={`${showOptionalHint ? "Optional · " : ""}${hydrated ? Intl.DateTimeFormat().resolvedOptions().timeZone : "local time"}`}
       error={error}
     >
       <Input
@@ -69,7 +73,9 @@ export function ExpiryField({
           onChange(e.target.value ? new Date(e.target.value).toISOString() : "")
         }
         aria-invalid={!!error}
-        aria-describedby={error ? "expiresAt-error" : "expiresAt-help"}
+        aria-describedby={
+          error ? "expiresAt-help expiresAt-error" : "expiresAt-help"
+        }
       />
     </FormField>
   );
@@ -94,13 +100,15 @@ export function DeleteButton({
         <AlertDialogHeader>
           <AlertDialogTitle>Delete {title}?</AlertDialogTitle>
           <AlertDialogDescription>
-            The shared address will stop working immediately and cannot be
-            reused.
+            This address will stop working. Reusing it will send old links and
+            QR codes to the new item.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel>Cancel</AlertDialogCancel>
-          <AlertDialogAction onClick={onDelete}>Delete item</AlertDialogAction>
+          <AlertDialogAction variant="destructive" onClick={onDelete}>
+            Delete item
+          </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>

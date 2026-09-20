@@ -6,7 +6,7 @@ import { checkIntent, endpoint, json, readJson } from "@/server/http";
 import { config } from "@/server/config";
 export const dynamic = "force-dynamic";
 export function POST(request: Request) {
-  return endpoint(async () => {
+  return endpoint("POST /api/auth/login", async () => {
     const env = bindings();
     checkIntent(request, env);
     const { password } = await readJson(

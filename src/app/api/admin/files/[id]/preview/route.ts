@@ -6,7 +6,7 @@ export function GET(
   request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  return endpoint(async () => {
+  return endpoint("GET /api/admin/files/[id]/preview", async () => {
     const { env } = await ownerContext(request);
     const value = (await params).id;
     const file = await findFile(env, value, true);

@@ -26,15 +26,10 @@ const conflict = () =>
   new AppError(
     409,
     "CONFLICT",
-    "This item changed in another tab. Reload it before saving.",
+    "Changed in another tab. Reload before saving.",
   );
-export async function resourceDto(
-  env: Env,
-  row: typeof resources.$inferSelect,
-  withBody = false,
-): Promise<ResourceDto> {
-  const db = database(env);
-  const result: ResourceDto = {
+function baseDto(env: Env, row: typeof resources.$inferSelect) {
+  return {
     id: row.id,
     kind: row.kind,
     slug: row.slug,
@@ -47,7 +42,15 @@ export async function resourceDto(
     createdAt: new Date(row.createdAt).toISOString(),
     updatedAt: new Date(row.updatedAt).toISOString(),
     url: canonicalUrl(config(env).origin, row.kind, row.slug),
-  };
+  } satisfies ResourceDto;
+}
+export async function resourceDto(
+  env: Env,
+  row: typeof resources.$inferSelect,
+  withBody = false,
+): Promise<ResourceDto> {
+  const db = database(env);
+  const result: ResourceDto = baseDto(env, row);
   if (row.kind === "link") {
     const link = await db
       .select()
@@ -130,16 +133,47 @@ export async function listResources(
       )!,
     );
   }
+  // Project subtype metadata in one query. Paste bodies never enter a list response.
   const rows = await database(env)
-    .select()
+    .select({
+      resource: resources,
+      destinationUrl: links.destinationUrl,
+      format: pastes.format,
+      language: pastes.language,
+      filename: files.originalFilename,
+      bytes: blobs.expectedBytes,
+      uploadState: blobs.state,
+      detectedType: blobs.detectedType,
+      uploadId: blobs.id,
+    })
     .from(resources)
+    .leftJoin(links, eq(links.resourceId, resources.id))
+    .leftJoin(pastes, eq(pastes.resourceId, resources.id))
+    .leftJoin(files, eq(files.resourceId, resources.id))
+    .leftJoin(blobs, eq(blobs.id, files.blobId))
     .where(and(...filters))
     .orderBy(desc(resources.updatedAt), desc(resources.id))
     .limit(input.limit + 1);
   const visible = rows.slice(0, input.limit),
-    last = visible.at(-1);
+    last = visible.at(-1)?.resource;
   return {
-    items: await Promise.all(visible.map((row) => resourceDto(env, row))),
+    items: visible.map((row): ResourceDto => ({
+      ...baseDto(env, row.resource),
+      ...(kind === "link"
+        ? { destinationUrl: row.destinationUrl ?? undefined }
+        : kind === "paste"
+          ? {
+              format: row.format ?? undefined,
+              language: row.language ?? undefined,
+            }
+          : {
+              filename: row.filename ?? undefined,
+              bytes: row.bytes ?? undefined,
+              uploadState: row.uploadState ?? undefined,
+              uploadId: row.uploadId ?? undefined,
+              previewable: Boolean(row.detectedType?.startsWith("image/")),
+            }),
+    })),
     nextCursor:
       rows.length > input.limit && last
         ? Buffer.from(
@@ -148,6 +182,7 @@ export async function listResources(
         : null,
   };
 }
+
 export async function getResource(env: Env, kind: ResourceKind, id: string) {
   const row = await database(env)
     .select()
@@ -171,7 +206,13 @@ export async function publicResource(
   const row = await database(env)
     .select()
     .from(resources)
-    .where(and(eq(resources.kind, kind), eq(resources.slug, slug)))
+    .where(
+      and(
+        eq(resources.kind, kind),
+        eq(resources.slug, slug),
+        isNull(resources.deletedAt),
+      ),
+    )
     .get();
   if (!row || !available(row)) return null;
   return row;
@@ -195,8 +236,8 @@ export async function validateContent(
 ) {
   const expiry = input.expiresAt ? Date.parse(input.expiresAt) : null;
   if (expiry !== null && expiry <= Date.now() && input.state === "active")
-    throw new AppError(400, "VALIDATION", "Choose a future expiry.", {
-      expiresAt: "Choose a future expiry before publishing.",
+    throw new AppError(400, "VALIDATION", "Choose a future date and time.", {
+      expiresAt: "Choose a future date and time before publishing.",
     });
   if (kind === "link" && input.destinationUrl) {
     const dest = new URL(input.destinationUrl);
@@ -221,7 +262,7 @@ export async function validateContent(
       throw new AppError(
         413,
         "TOO_LARGE",
-        "The paste exceeds the allowed byte limit.",
+        "This paste exceeds the size limit.",
         { body: "The paste is too large." },
       );
   }
@@ -266,8 +307,8 @@ export async function createResource(
       now = Date.now();
     const expiresAt = await validateContent(env, kind, input, slug);
     if (expiresAt !== null && expiresAt <= now)
-      throw new AppError(400, "VALIDATION", "Choose a future expiry.", {
-        expiresAt: "Choose a future expiry.",
+      throw new AppError(400, "VALIDATION", "Choose a future date and time.", {
+        expiresAt: "Choose a future date and time.",
       });
     const title =
       input.title ||
@@ -317,7 +358,7 @@ export async function createResource(
         throw new AppError(
           409,
           "SLUG_TAKEN",
-          "This address is already reserved.",
+          "This address is already in use.",
           { slug: "Choose another address." },
         );
       }
@@ -339,7 +380,7 @@ export async function createResource(
   throw new AppError(
     503,
     "UNAVAILABLE",
-    "Could not allocate an address. Try again.",
+    "Could not create an address. Try again.",
   );
 }
 export async function updateResource(
@@ -378,7 +419,10 @@ export async function updateResource(
     env.DB.prepare(
       "UPDATE resources SET title=?,state=?,expires_at=?,revision=revision+1,updated_at=? WHERE id=? AND kind=? AND revision=? AND deleted_at IS NULL RETURNING id",
     ).bind(
-      input.title || current.title,
+      input.title ||
+        (kind === "link"
+          ? new URL(input.destinationUrl!).hostname
+          : current.title),
       input.state,
       expiresAt,
       now,
@@ -400,6 +444,43 @@ export async function updateResource(
     throw error;
   }
   if (!results.at(-1)?.results.length) throw conflict();
+  return getResource(env, kind, id);
+}
+export async function changeResourceState(
+  env: Env,
+  kind: ResourceKind,
+  id: string,
+  input: { state: "active" | "disabled"; expectedRevision: number },
+) {
+  const current = await getResource(env, kind, id);
+  if (current.revision !== input.expectedRevision) throw conflict();
+  if (
+    input.state === "active" &&
+    current.expiresAt &&
+    Date.parse(current.expiresAt) <= Date.now()
+  )
+    throw new AppError(
+      400,
+      "VALIDATION",
+      "Choose a future date and time before publishing.",
+      { expiresAt: "Save a future date and time before publishing." },
+    );
+  if (
+    input.state === "active" &&
+    kind === "file" &&
+    current.uploadState !== "ready"
+  )
+    throw new AppError(
+      409,
+      "UPLOAD_NOT_READY",
+      "Finish uploading before publishing.",
+    );
+  const row = await env.DB.prepare(
+    "UPDATE resources SET state=?,revision=revision+1,updated_at=? WHERE id=? AND kind=? AND revision=? AND deleted_at IS NULL RETURNING id",
+  )
+    .bind(input.state, Date.now(), id, kind, input.expectedRevision)
+    .first();
+  if (!row) throw conflict();
   return getResource(env, kind, id);
 }
 export async function deleteResource(
@@ -431,7 +512,13 @@ export async function publicLink(env: Env, slug: string) {
     })
     .from(resources)
     .innerJoin(links, eq(links.resourceId, resources.id))
-    .where(and(eq(resources.kind, "link"), eq(resources.slug, slug)))
+    .where(
+      and(
+        eq(resources.kind, "link"),
+        eq(resources.slug, slug),
+        isNull(resources.deletedAt),
+      ),
+    )
     .get();
   return row && available(row) ? row.destinationUrl : null;
 }

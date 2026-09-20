@@ -1,8 +1,9 @@
 "use client";
 import { LocalTime } from "@/components/patterns/local-time";
-import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
+import { Progress } from "@/components/ui/progress";
+import { formatBytes } from "@/shared/format";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -13,11 +14,9 @@ import {
 } from "@/components/ui/select";
 import { FormField, fieldProps } from "@/components/patterns/form-field";
 import { ToggleField } from "@/components/patterns/toggle-field";
-import {
-  MutationFeedback,
-  useMutation,
-} from "@/components/patterns/mutation-feedback";
-import { useEditorGuard } from "@/components/patterns/navigation-guard";
+import { MutationFeedback } from "@/components/patterns/mutation-feedback";
+import { useEditor } from "@/components/patterns/use-editor";
+import { EditorActions } from "@/components/patterns/editor-actions";
 import { api } from "@/shared/client-api";
 import type { z } from "zod";
 import type { settingsSchema } from "@/shared/configuration";
@@ -25,12 +24,13 @@ type Settings = Omit<z.infer<typeof settingsSchema>, "expectedRevision"> & {
   revision: number;
 };
 export function SettingsWorkspace({
-  data,
+  data: incoming,
   origin,
   usage,
   ceilings,
   readOnly,
   expiresAt,
+  passwordCommand,
 }: {
   data: Settings;
   origin: string;
@@ -38,19 +38,18 @@ export function SettingsWorkspace({
   ceilings: { upload: number; quota: number; paste: number };
   readOnly: boolean;
   expiresAt: string;
+  passwordCommand: string;
 }) {
-  const [form, setForm] = useState(data);
-  const mutation = useMutation(),
-    router = useRouter();
-  useEditorGuard(JSON.stringify(form) !== JSON.stringify(data));
+  const editor = useEditor(incoming, (record) => record);
+  const { form, setForm, saved: data, dirty, mutation } = editor;
+  const router = useRouter();
   const total = usage.used + usage.pending + usage.retained;
-  const mib = (bytes: number) => (bytes / 1024 ** 2).toFixed(2) + " MiB";
+  const usedPercent = Math.min(100, (total / data.quotaBytes) * 100);
   return (
     <>
       <header className="workspace-header">
         <div>
           <h1>Settings</h1>
-          <p>Identity, appearance, and the space your shares use.</p>
         </div>
       </header>
       <div className="config-workspace">
@@ -58,36 +57,60 @@ export function SettingsWorkspace({
           className="form-stack"
           onSubmit={(e) => {
             e.preventDefault();
-            void mutation.run(async () => {
-              await api("/api/admin/settings", "PATCH", {
-                label: form.label,
-                websiteUrl: form.websiteUrl,
-                accent: form.accent,
-                showPoweredBy: form.showPoweredBy,
-                uploadMaxBytes: form.uploadMaxBytes,
-                quotaBytes: form.quotaBytes,
-                pasteMaxBytes: form.pasteMaxBytes,
-                expectedRevision: data.revision,
+            void editor
+              .save(async () => {
+                const saved = await api<Settings>(
+                  "/api/admin/settings",
+                  "PATCH",
+                  {
+                    label: form.label,
+                    websiteUrl: form.websiteUrl,
+                    accent: form.accent,
+                    showPoweredBy: form.showPoweredBy,
+                    uploadMaxBytes: form.uploadMaxBytes,
+                    quotaBytes: form.quotaBytes,
+                    pasteMaxBytes: form.pasteMaxBytes,
+                    expectedRevision: data.revision,
+                  },
+                );
+                document.documentElement.dataset.accent = form.accent;
+                return saved;
+              })
+              .then((saved) => {
+                if (saved) router.refresh();
               });
-              document.documentElement.dataset.accent = form.accent;
-              router.refresh();
-            });
           }}
         >
           <h2>General</h2>
+          <EditorActions dirty={dirty} pending={mutation.pending}>
+            <Button disabled={mutation.pending || readOnly}>
+              {mutation.pending ? "Saving…" : "Save changes"}
+            </Button>
+            {mutation.error?.status === 409 && (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  if (window.confirm("Reload and discard your edits?"))
+                    window.location.reload();
+                }}
+              >
+                Reload
+              </Button>
+            )}
+          </EditorActions>
           <MutationFeedback
             {...mutation}
             onReauthenticated={() => mutation.setError(null)}
           />
           {readOnly && (
             <p role="status" className="border-primary bg-accent border p-3">
-              Changes are paused for maintenance. Reading and downloading remain
-              available.
+              Changes paused for maintenance. Viewing and downloads still work.
             </p>
           )}
           <FormField
             id="label"
-            label="Installation label"
+            label="Site name"
             error={mutation.error?.fields?.label}
           >
             <Input
@@ -101,11 +124,11 @@ export function SettingsWorkspace({
           <FormField
             id="websiteUrl"
             label="Personal website"
-            help="The root address redirects here. Leave blank to use your published card."
+            help="Your site address redirects here. Blank uses your published card."
             error={mutation.error?.fields?.websiteUrl}
           >
             <Input
-              {...fieldProps("websiteUrl", mutation.error?.fields)}
+              {...fieldProps("websiteUrl", mutation.error?.fields, true)}
               type="url"
               value={form.websiteUrl}
               maxLength={2048}
@@ -114,11 +137,12 @@ export function SettingsWorkspace({
           </FormField>
           <FormField
             id="origin"
-            label="Canonical address"
-            help="Configured by the operator for this installation."
+            label="Site address"
+            help="Set in deployment settings."
           >
             <Input
               id="origin"
+              aria-describedby="origin-help"
               value={origin}
               readOnly
               className="font-mono text-xs"
@@ -145,7 +169,7 @@ export function SettingsWorkspace({
           <ToggleField
             id="showPoweredBy"
             label="Show Powered by Emboss"
-            help="A discreet footer on public pages."
+            help="On public pages."
             checked={form.showPoweredBy}
             onChange={(v) => setForm({ ...form, showPoweredBy: v })}
           />
@@ -154,7 +178,7 @@ export function SettingsWorkspace({
             [
               {
                 key: "uploadMaxBytes",
-                label: "File limit (MiB)",
+                label: "Maximum file size (MiB)",
                 unit: 1024 ** 2,
                 max: ceilings.upload,
               },
@@ -166,7 +190,7 @@ export function SettingsWorkspace({
               },
               {
                 key: "pasteMaxBytes",
-                label: "Paste limit (KiB)",
+                label: "Maximum paste size (KiB)",
                 unit: 1024,
                 max: ceilings.paste,
               },
@@ -176,11 +200,11 @@ export function SettingsWorkspace({
               key={field.key}
               id={field.key}
               label={field.label}
-              help={`Operator maximum: ${field.max / field.unit}.`}
+              help={`Maximum: ${field.max / field.unit}.`}
               error={mutation.error?.fields?.[field.key]}
             >
               <Input
-                {...fieldProps(field.key, mutation.error?.fields)}
+                {...fieldProps(field.key, mutation.error?.fields, true)}
                 type="number"
                 step="any"
                 min={1 / field.unit}
@@ -198,75 +222,64 @@ export function SettingsWorkspace({
               />
             </FormField>
           ))}
-          <div className="form-actions">
-            <Button disabled={mutation.pending || readOnly}>
-              {mutation.pending ? "Saving…" : "Save changes"}
-            </Button>
-            {mutation.error?.status === 409 && (
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => {
-                  if (window.confirm("Reload and discard your edits?"))
-                    router.refresh();
-                }}
-              >
-                Reload
-              </Button>
-            )}
-          </div>
         </form>
         <aside className="form-stack">
           <section className="quiet-panel form-stack">
             <h2>Storage</h2>
-            <dl className="space-y-3">
+            <div className="storage-meter">
+              <p>
+                <strong>{formatBytes(total)}</strong>
+                <span>of {formatBytes(data.quotaBytes)} used</span>
+              </p>
+              <Progress value={usedPercent} aria-label="Storage used" />
+            </div>
+            <dl className="data-list">
               {[
-                ["Ready files", usage.used],
-                ["Pending uploads", usage.pending],
-                ["Retained deletions", usage.retained],
+                ["Files", usage.used],
+                ["Uploading", usage.pending],
+                ["Deleted files", usage.retained],
                 ["Total", total],
               ].map(([label, bytes]) => (
                 <div className="flex justify-between gap-3" key={label}>
                   <dt>{label}</dt>
-                  <dd className="font-mono text-xs">{mib(Number(bytes))}</dd>
+                  <dd className="font-mono text-xs">
+                    {formatBytes(Number(bytes))}
+                  </dd>
                 </div>
               ))}
             </dl>
             <p className="muted">
-              {mib(data.quotaBytes)} available in this installation. Deleted
-              binaries count toward storage until retention ends. Lowering a
-              limit does not delete existing files.
+              {formatBytes(Math.max(0, data.quotaBytes - total))} remaining.
+              Deleted files count until cleanup. Lower limits do not delete
+              files.
             </p>
           </section>
           <section className="form-stack border-t pt-5">
-            <h2>Your data</h2>
+            <h2>Data export</h2>
             <p className="muted">
-              Export settings, share contents, and a file manifest. Binary files
-              and authentication data are excluded.
+              Includes settings, links, pastes, and file details. Excludes file
+              contents and sign-in data.
             </p>
             <Button variant="outline" asChild>
               <a href="/api/admin/export" download>
-                Export metadata
+                Export data
               </a>
             </Button>
             <p className="muted">
-              For a complete backup, use the operator backup procedure to copy
-              D1 and R2 together.
+              For a full backup, follow the backup procedure in the README.
             </p>
           </section>
           <section className="form-stack border-t pt-5">
             <h2>Admin session</h2>
             <p className="muted">
-              Expires <LocalTime value={expiresAt} />. Sign out from the Admin
-              session menu.
+              Expires <LocalTime value={expiresAt} />.
             </p>
             <p className="muted">
-              To change or recover the password, run the protected operator
-              command on the installation host. A password rotation signs out
-              every session.
+              Reset your password from the project terminal. This signs out all
+              sessions.
             </p>
             <code className="bg-secondary p-3 text-xs break-all">
-              pnpm admin:password --env production
+              {passwordCommand}
             </code>
           </section>
         </aside>

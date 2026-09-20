@@ -10,7 +10,7 @@ import { PNG } from "pngjs";
 import jsQR from "jsqr";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
-const origin = "http://127.0.0.1:8787",
+const origin = process.env.EMBOSS_TEST_ORIGIN ?? "http://127.0.0.1:8787",
   password = "Emboss local test password 2026!";
 const headers = {
   Origin: origin,
@@ -100,6 +100,26 @@ test("private pages and APIs enforce authorization and request intent", async ({
     });
     expect(r.status()).toBe(403);
   }
+  for (const path of [
+    "/api/admin/links/unknown/state",
+    "/api/admin/pastes/unknown/state",
+    "/api/admin/files/unknown/state",
+    "/api/admin/business-card/unpublish",
+  ]) {
+    const data = path.endsWith("state")
+      ? { state: "disabled", expectedRevision: 1 }
+      : { expectedRevision: 1 };
+    expect((await anonymous.patch(path, { headers, data })).status()).toBe(401);
+    expect((await request.patch(path, { data })).status()).toBe(403);
+    expect(
+      (
+        await request.patch(path, {
+          headers,
+          data: { ...data, unexpected: true },
+        })
+      ).status(),
+    ).toBe(400);
+  }
   const cookies = await context.cookies();
   expect(cookies.find((c) => c.name === "emboss_session_dev")).toMatchObject({
     httpOnly: true,
@@ -118,15 +138,70 @@ test("private pages and APIs enforce authorization and request intent", async ({
     expect((await anonymous.get(path, { maxRedirects: 0 })).status()).toBe(404);
   await anonymous.dispose();
 });
+test("creates a four-character link from only its destination and reuses it after deletion", async () => {
+  await page.goto("/admin/links?item=new");
+  await expect(
+    page.getByRole("group", { name: "Optional", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByLabel("Label", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("Custom address")).toBeVisible();
+  await expect(page.getByLabel("Expires", { exact: true })).toBeVisible();
+  await page.getByLabel("Destination URL").fill("https://example.org/first");
+  await page.getByRole("button", { name: "Create link", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Edit link" })).toBeVisible();
+  await expect(page).toHaveURL(/item=[a-f0-9-]{36}/);
+  const id = new URL(page.url()).searchParams.get("item")!;
+  const original = await json<Resource>(`/api/admin/links/${id}`, "GET");
+  expect(original.slug).toMatch(/^[23456789abcdefghjkmnpqrstuvwxyz]{4}$/);
+  expect(original.title).toBe("example.org");
+  expect(
+    (await request.get(original.url, { maxRedirects: 0 })).headers().location,
+  ).toBe("https://example.org/first");
+  await page.getByRole("button", { name: "Delete", exact: true }).click();
+  await expect(page.getByRole("alertdialog")).toContainText("Reusing it");
+  const deletion = page.waitForResponse(
+    (response) =>
+      response.url().endsWith(`/api/admin/links/${id}`) &&
+      response.request().method() === "DELETE",
+  );
+  await page.getByRole("button", { name: "Delete item", exact: true }).click();
+  expect((await deletion).status()).toBe(204);
+  expect((await request.get(original.url, { maxRedirects: 0 })).status()).toBe(
+    404,
+  );
+  await page.goto("/admin/links?item=new");
+  await page
+    .getByLabel("Destination URL")
+    .fill("https://example.net/replacement");
+  await page.getByLabel("Custom address").fill(original.slug);
+  await page.getByRole("button", { name: "Create link", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Edit link" })).toBeVisible();
+  await expect(page).toHaveURL(/item=[a-f0-9-]{36}/);
+  const newId = new URL(page.url()).searchParams.get("item")!;
+  expect(newId).not.toBe(id);
+  expect(
+    (await request.get(original.url, { maxRedirects: 0 })).headers().location,
+  ).toBe("https://example.net/replacement");
+  expect((await request.get(`/api/admin/links/${id}`)).status()).toBe(404);
+  expect(
+    (
+      await request.delete(`/api/admin/links/${newId}`, {
+        headers,
+        data: { expectedRevision: 1 },
+      })
+    ).status(),
+  ).toBe(204);
+});
 test("creates and edits a link, protects unsaved edits, and exports decodable QR", async () => {
   await page.goto("/admin/links?item=new");
   await page
     .getByLabel("Destination URL")
     .fill("https://example.org/start?stored=1");
-  await page.getByLabel("Title", { exact: true }).fill("Design notes");
-  await page.getByLabel("Short address").fill(slug);
+  await page.getByLabel("Label", { exact: true }).fill("Design notes");
+  await page.getByLabel("Custom address").fill(slug);
   await page.getByRole("button", { name: "Create link", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Edit link" })).toBeVisible();
+  await expect(page).toHaveURL(/item=[a-f0-9-]{36}/);
   const slash = await request.get(`/${slug}/`, { maxRedirects: 0 });
   expect(slash.status()).toBe(307);
   expect(slash.headers().location).toBe(`${origin}/${slug}`);
@@ -136,15 +211,15 @@ test("creates and edits a link, protects unsaved edits, and exports decodable QR
     "https://example.org/start?stored=1",
   );
   expect(redirect.headers()["cache-control"]).toBe("no-store");
-  await page.getByLabel("Title", { exact: true }).fill("Unsaved title");
+  await page.getByLabel("Label", { exact: true }).fill("Unsaved title");
   await page.getByRole("button", { name: "Close editor" }).click();
   await expect(page.getByRole("alertdialog")).toBeVisible();
   await page.getByRole("button", { name: "Keep editing" }).click();
-  await expect(page.getByLabel("Title", { exact: true })).toHaveValue(
+  await expect(page.getByLabel("Label", { exact: true })).toHaveValue(
     "Unsaved title",
   );
   await page.getByRole("button", { name: "Save changes", exact: true }).click();
-  await expect(page.getByLabel("Title", { exact: true })).toHaveValue(
+  await expect(page.getByLabel("Label", { exact: true })).toHaveValue(
     "Unsaved title",
   );
   await expect(
@@ -179,14 +254,12 @@ test("creates and edits a link, protects unsaved edits, and exports decodable QR
     expectedRevision: item.revision,
   };
   await json(`/api/admin/links/${itemId}`, "PATCH", payload);
-  await page.getByLabel("Title", { exact: true }).fill("Keep my work");
+  await page.getByLabel("Label", { exact: true }).fill("Keep my work");
   await page.getByRole("button", { name: "Save changes", exact: true }).click();
   await expect(
-    page.getByText(
-      "This item changed in another tab. Reload it before saving.",
-    ),
+    page.getByText("Changed in another tab. Reload before saving."),
   ).toBeVisible();
-  await expect(page.getByLabel("Title", { exact: true })).toHaveValue(
+  await expect(page.getByLabel("Label", { exact: true })).toHaveValue(
     "Keep my work",
   );
   page.once("dialog", (dialog) => dialog.accept());
@@ -205,7 +278,7 @@ test("renders sanitized Markdown and exact raw text with draft and expiry gates"
   await page.goto("/admin/pastes?item=new");
   await page.getByLabel("Title", { exact: true }).fill("Unicode notes");
   await page.getByLabel("Content", { exact: true }).fill(body);
-  await page.getByLabel("Short address").fill(`${slug}-paste`);
+  await page.getByLabel("Custom address").fill(`${slug}-paste`);
   await page.getByRole("button", { name: "Save draft", exact: true }).click();
   await expect(page).toHaveURL(/item=[a-f0-9-]{36}/);
   expect((await request.get(`/p/${slug}-paste/raw`)).status()).toBe(404);
@@ -264,7 +337,7 @@ test("renders sanitized Markdown and exact raw text with draft and expiry gates"
   await publicPage.close();
   await page.goto("/admin/pastes?item=new");
   await page.getByLabel("Format").click();
-  await page.getByRole("option", { name: "code", exact: true }).click();
+  await page.getByRole("option", { name: "Code", exact: true }).click();
   await expect(page.locator(".cm-editor")).toBeVisible();
   await page.locator(".cm-content").fill('const message = "hello";');
   await page.getByRole("tab", { name: "Preview", exact: true }).click();
@@ -332,7 +405,14 @@ test("uploads through the Worker, publishes, downloads, ranges, and revokes", as
   );
   await page.getByLabel("Title", { exact: true }).fill(file.title);
   await page.getByRole("button", { name: "Delete", exact: true }).click();
+  const deletion = page.waitForResponse(
+    (response) =>
+      response.url().endsWith(`/api/admin/files/${id}`) &&
+      response.request().method() === "DELETE",
+  );
   await page.getByRole("button", { name: "Delete item", exact: true }).click();
+  expect((await deletion).status()).toBe(204);
+  await expect(page).toHaveURL(`${origin}/admin/files`);
   await expect(
     page.getByRole("heading", { name: "File details" }),
   ).not.toBeVisible();
@@ -345,13 +425,15 @@ test("uploads through the Worker, publishes, downloads, ranges, and revokes", as
 });
 test("publishes scheduling and a card with avatar and valid contact download", async () => {
   await page.goto("/admin/scheduling");
-  await page.getByLabel("Provider label").fill("Booking");
+  await page.getByLabel("Provider", { exact: true }).fill("Booking");
   await page.getByLabel("Booking URL").fill("https://example.org/booking");
   const enabled = page.getByRole("switch", { name: "Enable scheduling" });
   if ((await enabled.getAttribute("aria-checked")) !== "true")
     await enabled.click();
   await page.getByRole("button", { name: "Save changes", exact: true }).click();
-  await expect(page.getByText("active", { exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("main").getByText("active", { exact: true }),
+  ).toBeVisible();
   const meet = await request.get("/meet?unused=1", { maxRedirects: 0 });
   expect(meet.headers().location).toBe("https://example.org/booking");
   const beforeAvatar = await json<{
@@ -394,7 +476,9 @@ test("publishes scheduling and a card with avatar and valid contact download", a
     await page
       .getByRole("button", { name: "Save changes", exact: true })
       .click();
-  await expect(page.getByText("active", { exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("main").getByText("active", { exact: true }),
+  ).toBeVisible();
   const contact = await context.newPage();
   await contact.goto("/contact");
   await expect(
@@ -427,7 +511,7 @@ test("publishes scheduling and a card with avatar and valid contact download", a
 });
 test("settings, export, responsive navigation and accessibility remain usable", async ({}, info) => {
   await page.goto("/admin/settings");
-  await page.getByLabel("Installation label").fill("Emboss");
+  await page.getByLabel("Site name").fill("Emboss");
   await page.getByLabel("Accent", { exact: true }).click();
   await page.getByRole("option", { name: "Instrument blue" }).click();
   await page.getByRole("button", { name: "Save changes", exact: true }).click();
@@ -476,10 +560,385 @@ test("settings, export, responsive navigation and accessibility remain usable", 
   expect(errors).toEqual([]);
 });
 
+test("narrow workspaces preserve readable controls, long content, and sharing focus", async () => {
+  const originalViewport = page.viewportSize()!;
+  const link = await json<Resource>("/api/admin/links", "POST", {
+    title: "A long resource title " + "reference ".repeat(12),
+    slug: `${slug}-layout`,
+    destinationUrl: "https://example.org/" + "reference/".repeat(30),
+    state: "active",
+    expiresAt: null,
+  });
+  const paste = await json<Resource>("/api/admin/pastes", "POST", {
+    title: "Long content layout",
+    slug: `${slug}-layout`,
+    body: "W".repeat(1500),
+    format: "text",
+    language: "text",
+    state: "active",
+    expiresAt: null,
+  });
+  for (const width of [1024, 320]) {
+    await page.setViewportSize({ width, height: 700 });
+    for (const route of [
+      `links?item=${link.id}`,
+      `pastes?item=${paste.id}`,
+      "files",
+      "scheduling",
+      "business-card",
+      "settings",
+    ]) {
+      await page.goto(`/admin/${route}`);
+      await expect(
+        page.getByRole("main").getByRole("heading", { level: 1 }),
+      ).toBeVisible();
+      expect(
+        await page.evaluate(
+          () => document.documentElement.scrollWidth <= innerWidth,
+        ),
+        `${route} fits ${width}px`,
+      ).toBe(true);
+    }
+    await page.goto(`/admin/links?item=${link.id}`);
+    await page.getByRole("button", { name: "Share", exact: true }).click();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog.getByRole("img", { name: /^QR code/ })).toBeVisible();
+    const box = (await dialog.boundingBox())!;
+    expect(box.x).toBeGreaterThanOrEqual(0);
+    expect(box.x + box.width).toBeLessThanOrEqual(width);
+    expect(box.height).toBeLessThanOrEqual(700);
+    await page.keyboard.press("Escape");
+    await expect(
+      page.getByRole("button", { name: "Share", exact: true }),
+    ).toBeFocused();
+  }
+  await page.setViewportSize(originalViewport);
+  await page.goto(`/admin/links?item=${link.id}`);
+  await page
+    .getByLabel("Label", { exact: true })
+    .fill("Unsaved keyboard check");
+  await page.getByRole("link", { name: "Skip to workspace" }).focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("main")).toBeFocused();
+  await expect(page.getByRole("alertdialog")).not.toBeVisible();
+  await page.getByLabel("Label", { exact: true }).fill(link.title);
+  await page.goto("/admin/links");
+  await expect(page).toHaveTitle("Links · Emboss");
+  await page.getByLabel("Search links", { exact: true }).fill(`${slug}-layout`);
+  await page.getByRole("button", { name: "Search", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: new RegExp(`${slug}-layout`) }),
+  ).toBeVisible();
+  await page.getByLabel("Filter links").click();
+  await page.getByRole("option", { name: "Draft", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "No matching links" }),
+  ).toBeVisible();
+  for (const icon of ["/icon.svg", "/favicon.ico", "/apple-touch-icon.png"])
+    expect((await request.get(icon)).status(), icon).toBe(200);
+  for (const [kind, item] of [
+    ["links", link],
+    ["pastes", paste],
+  ] as const) {
+    const deleted = await request.delete(`/api/admin/${kind}/${item.id}`, {
+      headers,
+      data: { expectedRevision: item.revision },
+    });
+    expect(deleted.status()).toBe(204);
+  }
+});
+
+test("Back and Forward keep drafts on cancel and preserve history on discard", async () => {
+  const a = await json<Resource>("/api/admin/links", "POST", {
+    title: "History A",
+    slug: `${slug}-history-a`,
+    destinationUrl: "https://example.org/a",
+    state: "active",
+    expiresAt: null,
+  });
+  const b = await json<Resource>("/api/admin/links", "POST", {
+    title: "History B",
+    slug: `${slug}-history-b`,
+    destinationUrl: "https://example.org/b",
+    state: "active",
+    expiresAt: null,
+  });
+  await page.goto("/admin/links");
+  await page.getByRole("button", { name: new RegExp(`/${a.slug}`) }).click();
+  await expect(page.getByLabel("Label", { exact: true })).toHaveValue(a.title);
+  await page.getByRole("button", { name: new RegExp(`/${b.slug}`) }).click();
+  const label = page.getByLabel("Label", { exact: true });
+  await expect(label).toHaveValue(b.title);
+  await label.fill("Keep backward draft");
+  await page.evaluate(() => history.back());
+  await expect(page.getByRole("alertdialog")).toBeVisible();
+  await expect(page).toHaveURL(new RegExp(`item=${b.id}`));
+  await page.getByRole("button", { name: "Keep editing", exact: true }).click();
+  await expect(label).toHaveValue("Keep backward draft");
+  await page.evaluate(() => history.back());
+  await page
+    .getByRole("button", { name: "Discard changes", exact: true })
+    .click();
+  await expect(page).toHaveURL(new RegExp(`item=${a.id}`));
+  await expect(label).toHaveValue(a.title);
+  await label.fill("Keep forward draft");
+  await page.evaluate(() => history.forward());
+  await expect(page.getByRole("alertdialog")).toBeVisible();
+  await expect(page).toHaveURL(new RegExp(`item=${a.id}`));
+  await page.getByRole("button", { name: "Keep editing", exact: true }).click();
+  await expect(label).toHaveValue("Keep forward draft");
+  await page.evaluate(() => history.forward());
+  await page
+    .getByRole("button", { name: "Discard changes", exact: true })
+    .click();
+  await expect(page).toHaveURL(new RegExp(`item=${b.id}`));
+  await expect(label).toHaveValue(b.title);
+  await page.evaluate(() => history.back());
+  await expect(label).toHaveValue(a.title);
+  await page.evaluate(() => history.forward());
+  await expect(label).toHaveValue(b.title);
+});
+
+async function delaySave(
+  path: string,
+  method: string,
+  submit: () => Promise<void>,
+  edit: () => Promise<void>,
+) {
+  let release!: () => void, received!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const pending = new Promise<void>((resolve) => {
+    received = resolve;
+  });
+  const url = `${origin}${path}`;
+  await page.route(url, async (route) => {
+    if (route.request().method() !== method) return route.continue();
+    const response = await route.fetch();
+    expect(response.ok(), await response.text()).toBeTruthy();
+    received();
+    await gate;
+    await route.fulfill({ response });
+  });
+  try {
+    await submit();
+    await pending;
+    await edit();
+  } finally {
+    release();
+  }
+  await expect(page.locator(".editor-status:visible")).toHaveText(
+    "Unsaved changes",
+  );
+  await page.unroute(url);
+}
+
+test("every editor retains typing during a delayed save and saves it with the new revision", async () => {
+  const link = await json<Resource>("/api/admin/links", "POST", {
+    title: "Race link",
+    destinationUrl: "https://example.org/race",
+    state: "active",
+    expiresAt: null,
+  });
+  const paste = await json<Resource>("/api/admin/pastes", "POST", {
+    title: "Race paste",
+    body: "Race content",
+    format: "text",
+    language: "text",
+    state: "active",
+    expiresAt: null,
+  });
+  const upload = await json<{ uploadId: string }>("/api/admin/files", "POST", {
+    filename: "race.txt",
+    title: "Race file",
+    bytes: 3,
+  });
+  const transferred = await request.put(
+    `/api/admin/uploads/${upload.uploadId}`,
+    {
+      headers: { ...headers, "Content-Type": "application/octet-stream" },
+      data: Buffer.from("abc"),
+    },
+  );
+  expect(transferred.ok()).toBeTruthy();
+  for (const item of [
+    {
+      route: `links?item=${link.id}`,
+      api: `/api/admin/links/${link.id}`,
+      field: "Label",
+      key: "title",
+    },
+    {
+      route: `pastes?item=${paste.id}`,
+      api: `/api/admin/pastes/${paste.id}`,
+      field: "Title",
+      key: "title",
+    },
+    {
+      route: `files?item=${upload.uploadId}`,
+      api: `/api/admin/files/${upload.uploadId}`,
+      field: "Title",
+      key: "title",
+    },
+    {
+      route: "scheduling",
+      api: "/api/admin/scheduling",
+      field: "Provider",
+      key: "providerLabel",
+    },
+    {
+      route: "business-card",
+      api: "/api/admin/business-card",
+      field: "Display name",
+      key: "displayName",
+    },
+    {
+      route: "settings",
+      api: "/api/admin/settings",
+      field: "Site name",
+      key: "label",
+    },
+  ]) {
+    await page.goto(`/admin/${item.route}`);
+    const input = page.getByLabel(item.field, {
+      exact: item.field !== "Display name",
+    });
+    await input.fill("First saved value");
+    const save = page.getByRole("button", {
+      name: "Save changes",
+      exact: true,
+    });
+    await delaySave(
+      item.api,
+      "PATCH",
+      () => save.click(),
+      () => input.fill("Second unsaved value"),
+    );
+    await expect(save).toBeEnabled();
+    await expect(input).toHaveValue("Second unsaved value");
+    expect(
+      (await json<Record<string, unknown>>(item.api, "GET"))[item.key],
+    ).toBe("First saved value");
+    await save.click();
+    await expect(page.locator(".editor-status:visible")).toHaveText("Saved");
+    expect(
+      (await json<Record<string, unknown>>(item.api, "GET"))[item.key],
+    ).toBe("Second unsaved value");
+  }
+});
+
+test("creation keeps later typing across the first saved URL and New starts clean", async () => {
+  for (const kind of ["links", "pastes"]) {
+    await page.goto(`/admin/${kind}?item=new`);
+    const field = page.getByLabel(kind === "links" ? "Label" : "Title", {
+      exact: true,
+    });
+    await field.fill("First created value");
+    if (kind === "links")
+      await page
+        .getByLabel("Destination URL")
+        .fill("https://example.org/create");
+    else
+      await page.getByLabel("Content", { exact: true }).fill("Created content");
+    await delaySave(
+      `/api/admin/${kind}`,
+      "POST",
+      () =>
+        page
+          .getByRole("button", {
+            name: kind === "links" ? "Create link" : "Save draft",
+            exact: true,
+          })
+          .click(),
+      () => field.fill("Newer creation draft"),
+    );
+    await expect(page).toHaveURL(/item=[a-f0-9-]{36}/);
+    await expect(field).toHaveValue("Newer creation draft");
+    const id = new URL(page.url()).searchParams.get("item")!;
+    await page
+      .getByRole("button", {
+        name: "Save changes",
+        exact: true,
+      })
+      .click();
+    await expect(page.locator(".editor-status:visible")).toHaveText("Saved");
+    expect(
+      (await json<Resource>(`/api/admin/${kind}/${id}`, "GET")).title,
+    ).toBe("Newer creation draft");
+    await page
+      .getByRole("button", {
+        name: kind === "links" ? "New link" : "New paste",
+        exact: true,
+      })
+      .first()
+      .click();
+    await expect(field).toHaveValue("");
+    await expect(page.locator(".editor-status:visible")).toHaveText(
+      "Not saved",
+    );
+  }
+});
+
+test("revoking published content ignores invalid drafts and preserves them", async () => {
+  const link = await json<Resource>("/api/admin/links", "POST", {
+    title: "Revocation",
+    destinationUrl: "https://example.org/valid",
+    state: "active",
+    expiresAt: null,
+  });
+  await page.goto(`/admin/links?item=${link.id}`);
+  await page.getByLabel("Destination URL").fill("invalid draft");
+  await page.getByRole("button", { name: "Disable", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Enable", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByLabel("Destination URL")).toHaveValue("invalid draft");
+  expect((await request.get(link.url, { maxRedirects: 0 })).status()).toBe(404);
+  await page.getByRole("button", { name: "Enable", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Disable", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByLabel("Destination URL")).toHaveValue("invalid draft");
+  expect(
+    (await request.get(link.url, { maxRedirects: 0 })).headers().location,
+  ).toBe("https://example.org/valid");
+  await page.getByLabel("Destination URL").fill("https://example.org/valid");
+  await page.goto("/admin/business-card");
+  const name = page.getByLabel("Display name");
+  await name.fill("Saved public identity");
+  const publish = page.getByRole("button", {
+    name: "Publish card",
+    exact: true,
+  });
+  if (await publish.isVisible()) await publish.click();
+  else
+    await page
+      .getByRole("button", { name: "Save changes", exact: true })
+      .click();
+  await expect(page.locator(".editor-status:visible")).toHaveText("Saved");
+  await name.fill("");
+  await page
+    .getByRole("button", { name: "Unpublish card", exact: true })
+    .click();
+  await expect(publish).toBeVisible();
+  await expect(name).toHaveValue("");
+  await expect(page.locator(".editor-status:visible")).toHaveText(
+    "Unsaved changes",
+  );
+  for (const path of ["/contact", "/contact.vcf", "/contact/avatar"])
+    expect((await request.get(path)).status()).toBe(404);
+  expect(
+    (await json<{ displayName: string }>("/api/admin/business-card", "GET"))
+      .displayName,
+  ).toBe("Saved public identity");
+  await name.fill("Saved public identity");
+});
+
 test("expired sessions preserve edits through reauthentication and sign-out revokes access", async ({}, info) => {
   await page.goto("/admin/links?item=new");
   await page.getByLabel("Destination URL").fill("https://example.org/reauth");
-  await page.getByLabel("Title", { exact: true }).fill("Keep these edits");
+  await page.getByLabel("Label", { exact: true }).fill("Keep these edits");
   const logout = await request.post("/api/auth/logout", { headers, data: {} });
   expect(logout.status()).toBe(204);
   await page.getByRole("button", { name: "Create link", exact: true }).click();
@@ -489,11 +948,12 @@ test("expired sessions preserve edits through reauthentication and sign-out revo
   await page.getByLabel("Admin password").fill(password);
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await expect(page.getByRole("dialog")).not.toBeVisible();
-  await expect(page.getByLabel("Title", { exact: true })).toHaveValue(
+  await expect(page.getByLabel("Label", { exact: true })).toHaveValue(
     "Keep these edits",
   );
   await page.getByRole("button", { name: "Create link", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Edit link" })).toBeVisible();
+  await expect(page).toHaveURL(/item=[a-f0-9-]{36}/);
   if (info.project.name === "mobile")
     await page.getByRole("button", { name: "Open navigation" }).click();
   await page.getByRole("button", { name: "Admin session" }).click();

@@ -6,6 +6,7 @@ import { Progress } from "@/components/ui/progress";
 import { api, ApiError } from "@/shared/client-api";
 import { MutationFeedback } from "./mutation-feedback";
 import { useEditorGuard } from "./navigation-guard";
+import { formatBytes } from "@/shared/format";
 import type { ResourceDto } from "@/shared/resources";
 export type UploadResult = {
   uploadId: string;
@@ -115,7 +116,7 @@ export function UploadControl({
                 new ApiError(
                   xhr.status,
                   "FAILED",
-                  "The upload response was lost. Retry to check its status.",
+                  "Could not confirm the upload. Retry to check.",
                 ),
               );
               return;
@@ -138,16 +139,12 @@ export function UploadControl({
               new ApiError(
                 0,
                 "OFFLINE",
-                "The connection was lost. Retry when you are online.",
+                "Connection lost. Reconnect and retry.",
               ),
             );
           xhr.ontimeout = () =>
             reject(
-              new ApiError(
-                0,
-                "TIMEOUT",
-                "The upload timed out. Retry to check its status.",
-              ),
+              new ApiError(0, "TIMEOUT", "Upload timed out. Retry to check."),
             );
           xhr.onabort = () =>
             reject(new ApiError(0, "CANCELLED", "Upload cancelled."));
@@ -210,7 +207,7 @@ export function UploadControl({
           new ApiError(
             413,
             "TOO_LARGE",
-            `${file.name}: choose a nonempty file up to ${(maxBytes / 1024 ** 2).toFixed(0)} MiB.`,
+            `${file.name}: choose a nonempty file up to ${formatBytes(maxBytes)}.`,
           ),
         );
         continue;
@@ -246,11 +243,11 @@ export function UploadControl({
       >
         <div>
           <p className="font-medium">
-            {avatar ? "Choose an avatar" : "Drop files here"}
+            {avatar ? "Drop an image here" : "Drop files here"}
           </p>
           <p className="muted">
-            {avatar ? "PNG, JPEG, or WebP" : "Each file gets its own address"} ·
-            up to {(maxBytes / 1024 ** 2).toFixed(0)} MiB
+            {avatar ? "PNG, JPEG, or WebP · " : ""}Up to {formatBytes(maxBytes)}
+            {avatar ? "" : " per file"}
           </p>
         </div>
         <input

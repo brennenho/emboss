@@ -73,7 +73,9 @@ export const resources = sqliteTable(
     deletedAt: integer("deleted_at"),
   },
   (t) => [
-    uniqueIndex("resource_slug").on(t.kind, t.slug),
+    uniqueIndex("resource_slug")
+      .on(t.kind, t.slug)
+      .where(sql`${t.deletedAt} IS NULL`),
     index("resource_list").on(t.kind, t.state, t.updatedAt, t.id),
     index("resource_expiry").on(t.expiresAt),
     check("resource_kind", sql`${t.kind} IN ('link','paste','file')`),

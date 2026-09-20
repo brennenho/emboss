@@ -5,6 +5,8 @@ import { bindings } from "@/server/runtime";
 import { config } from "@/server/config";
 import { requireSession } from "@/server/auth/session";
 import { AppError } from "@/shared/errors";
+import { Brand } from "@/components/shell/brand";
+export const metadata = { title: "Sign in" };
 export default async function LoginPage() {
   const env = bindings();
   let signedIn = false;
@@ -19,12 +21,11 @@ export default async function LoginPage() {
   return (
     <main className="login-shell">
       <section className="login-panel">
-        <div className="wordmark">
-          <span className="mark" aria-hidden="true" />
-          EMBOSS
+        <div className="login-brand">
+          <Brand />
+          <p className="brand-host">{new URL(config(env).origin).host}</p>
         </div>
-        <p className="muted font-mono">{new URL(config(env).origin).host}</p>
-        <h1>Sign in to your tools</h1>
+        <h1>Sign in</h1>
         <PasswordForm />
       </section>
     </main>

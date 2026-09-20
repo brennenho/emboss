@@ -24,7 +24,7 @@ export const slugSchema = z
   .max(48)
   .regex(
     /^[a-z0-9]+(?:-[a-z0-9]+)*$/,
-    "Use lowercase letters, numbers, and internal hyphens.",
+    "Use lowercase letters and numbers, with hyphens between words.",
   )
   .refine((x) => !reservedSlugs.has(x), "This address is reserved.");
 export function canonicalUrl(origin: string, kind: ResourceKind, slug: string) {
@@ -81,7 +81,7 @@ export const urlSchema = z
   .max(2048)
   .refine(
     (v) => webUrl(v),
-    "Enter an absolute HTTP or HTTPS URL without credentials.",
+    "Enter an http:// or https:// URL without a username or password.",
   );
 export const expirySchema = z.string().datetime({ offset: true }).nullable();
 export const commonResourceSchema = z.object({
@@ -91,6 +91,7 @@ export const commonResourceSchema = z.object({
   state: z.enum(["draft", "active", "disabled"]),
 });
 export const linkSchema = commonResourceSchema.extend({
+  title: commonResourceSchema.shape.title.default(""),
   destinationUrl: urlSchema,
 });
 export const pasteSchema = commonResourceSchema.extend({
@@ -111,6 +112,23 @@ export const pasteSchema = commonResourceSchema.extend({
     ])
     .default("text"),
 });
+export const pasteFormatLabels = {
+  text: "Plain text",
+  code: "Code",
+  markdown: "Markdown",
+} satisfies Record<z.infer<typeof pasteSchema>["format"], string>;
+export const pasteLanguageLabels: Record<string, string> = {
+  text: "Plain text",
+  javascript: "JavaScript",
+  typescript: "TypeScript",
+  json: "JSON",
+  html: "HTML",
+  css: "CSS",
+  python: "Python",
+  shell: "Shell",
+  sql: "SQL",
+  yaml: "YAML",
+} satisfies Record<z.infer<typeof pasteSchema>["language"], string>;
 export const revisionSchema = z
   .object({ expectedRevision: z.number().int().positive() })
   .strict();
@@ -157,12 +175,39 @@ export const listSchema = z.object({
   cursor: z.string().max(256).optional(),
   limit: z.coerce.number().int().min(1).max(100).default(25),
 });
+const generatedAlphabet = "23456789abcdefghjkmnpqrstuvwxyz";
+export const generatedSlugLength = 4;
 export function generatedSlug() {
-  const bytes = crypto.getRandomValues(new Uint8Array(16));
-  let out = "";
-  for (const byte of bytes) {
-    if (byte < 252) out += "abcdefghijklmnopqrstuvwxyz0123456789"[byte % 36];
-    if (out.length === 8) return out;
+  // Rejection sampling keeps the 31-character alphabet uniformly distributed.
+  const limit = 256 - (256 % generatedAlphabet.length);
+  while (true) {
+    let slug = "";
+    while (slug.length < generatedSlugLength) {
+      for (const byte of crypto.getRandomValues(new Uint8Array(8))) {
+        if (byte < limit)
+          slug += generatedAlphabet[byte % generatedAlphabet.length];
+        if (slug.length === generatedSlugLength) break;
+      }
+    }
+    if (!reservedSlugs.has(slug)) return slug;
   }
-  return generatedSlug();
 }
+
+export function emptyResource(kind: ResourceKind): ResourceDto {
+  return {
+    id: "",
+    kind,
+    title: "",
+    slug: "",
+    state: "draft",
+    displayState: "draft",
+    expiresAt: null,
+    revision: 0,
+    createdAt: "",
+    updatedAt: "",
+    url: "",
+  };
+}
+export const resourceStateSchema = revisionSchema
+  .extend({ state: z.enum(["active", "disabled"]) })
+  .strict();

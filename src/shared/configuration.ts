@@ -10,13 +10,13 @@ export const schedulingSchema = z
       .max(2048)
       .refine(
         (v) => v === "" || webUrl(v, true),
-        "Enter an absolute HTTPS URL without credentials.",
+        "Enter an https:// URL without a username or password.",
       ),
     expectedRevision: z.number().int().positive(),
   })
   .strict()
   .refine((v) => !v.enabled || !!v.destinationUrl, {
-    message: "Choose a destination before enabling scheduling.",
+    message: "Enter a booking URL before enabling scheduling.",
     path: ["destinationUrl"],
   });
 export const cardSchema = z

@@ -2,6 +2,7 @@ import { pageOwner } from "@/server/runtime";
 import { ownerList, ownerResource, ownerSettings } from "@/server/owner";
 import { config } from "@/server/config";
 import { PasteWorkspace } from "@/features/pastes/paste-workspace";
+export const metadata = { title: "Pastes" };
 export default async function Page({
   searchParams,
 }: {

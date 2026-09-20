@@ -19,14 +19,14 @@ async function parameters(context: Context) {
 }
 export const dynamic = "force-dynamic";
 export function GET(request: Request, context: Context) {
-  return endpoint(async () => {
+  return endpoint("GET /api/admin/[kind]/[id]", async () => {
     await ownerContext(request);
     const { kind, id } = await parameters(context);
     return json(await ownerResource(kind, id, request));
   });
 }
 export function PATCH(request: Request, context: Context) {
-  return endpoint(async () => {
+  return endpoint("PATCH /api/admin/[kind]/[id]", async () => {
     checkIntent(request, bindings());
     await ownerContext(request);
     const { kind, id } = await parameters(context);
@@ -39,7 +39,7 @@ export function PATCH(request: Request, context: Context) {
   });
 }
 export function DELETE(request: Request, context: Context) {
-  return endpoint(async () => {
+  return endpoint("DELETE /api/admin/[kind]/[id]", async () => {
     checkIntent(request, bindings());
     await ownerContext(request);
     const { kind, id } = await parameters(context);

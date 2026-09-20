@@ -10,7 +10,7 @@ export default {
     const prepared = prepareRequest(request, env);
     if (prepared.response) return prepared.response;
     const path = new URL(request.url).pathname;
-    return endpoint(async () => {
+    return endpoint("worker.fetch", async () => {
       const response = (await publicPageAvailable(path, env))
         ? await handler.fetch(prepared.request!, env, ctx)
         : unavailable();

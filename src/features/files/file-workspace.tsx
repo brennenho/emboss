@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { X } from "lucide-react";
@@ -13,13 +13,6 @@ import {
   TableBody,
   TableCell,
 } from "@/components/ui/table";
-import {
-  Select,
-  SelectTrigger,
-  SelectValue,
-  SelectContent,
-  SelectItem,
-} from "@/components/ui/select";
 import { FormField, fieldProps } from "@/components/patterns/form-field";
 import {
   StatusBadge,
@@ -27,16 +20,14 @@ import {
   DeleteButton,
 } from "@/components/patterns/resource-controls";
 import { UploadControl } from "@/components/patterns/upload-control";
-import {
-  useEditorGuard,
-  useNavigationGuard,
-} from "@/components/patterns/navigation-guard";
-import {
-  MutationFeedback,
-  useMutation,
-} from "@/components/patterns/mutation-feedback";
+import { useNavigationGuard } from "@/components/patterns/navigation-guard";
+import { MutationFeedback } from "@/components/patterns/mutation-feedback";
 import { AddressPlate, ShareDialog } from "@/components/sharing/share-dialog";
+import { ResourceToolbar } from "@/components/patterns/resource-toolbar";
+import { useEditor } from "@/components/patterns/use-editor";
+import { EditorActions } from "@/components/patterns/editor-actions";
 import { api } from "@/shared/client-api";
+import { formatBytes } from "@/shared/format";
 import type { ResourceDto, ResourcePage } from "@/shared/resources";
 export function FileWorkspace({
   page,
@@ -53,7 +44,6 @@ export function FileWorkspace({
 }) {
   const router = useRouter(),
     go = useNavigationGuard();
-  const [search, setSearch] = useState(query);
   function navigate(item?: string, extra?: Record<string, string>) {
     const p = new URLSearchParams({ q: query, state, ...extra });
     if (item) p.set("item", item);
@@ -64,55 +54,45 @@ export function FileWorkspace({
       <header className="workspace-header">
         <div>
           <h1>Files</h1>
-          <p>Upload once. Share a stable address when you’re ready.</p>
         </div>
       </header>
       <div className={`work-split ${selected ? "has-inspector" : ""}`}>
-        <section className="min-w-0">
-          <div className="border-b p-6">
+        {selected && (
+          <FileEditor
+            key={selected.id}
+            item={selected}
+            onClose={() => navigate()}
+            onSaved={() => router.refresh()}
+            onDeleted={() => {
+              router.replace("/admin/files");
+              router.refresh();
+            }}
+          />
+        )}
+        <section className="collection-pane">
+          <div className="upload-section">
             <UploadControl
               maxBytes={maxBytes}
               onComplete={() => router.refresh()}
             />
           </div>
-          <form
-            className="toolbar"
-            onSubmit={(e) => {
-              e.preventDefault();
-              navigate(undefined, { q: search });
-            }}
-          >
-            <Input
-              aria-label="Search files"
-              placeholder="Search files"
-              value={search}
-              maxLength={200}
-              onChange={(e) => setSearch(e.target.value)}
-            />
-            <Button variant="outline">Search</Button>
-            <Select
-              value={state}
-              onValueChange={(v) => navigate(undefined, { state: v })}
-            >
-              <SelectTrigger className="w-36" aria-label="Filter files">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {["all", "active", "draft", "disabled", "expired"].map((v) => (
-                  <SelectItem key={v} value={v}>
-                    {v}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </form>
+          <ResourceToolbar
+            key={query}
+            kind="files"
+            query={query}
+            state={state}
+            onSearch={(q) => navigate(undefined, { q })}
+            onFilter={(state) => navigate(undefined, { state })}
+          />
           {page.items.length ? (
-            <Table>
+            <Table className="resource-table">
               <TableHeader>
                 <TableRow>
-                  <TableHead className="pl-6">File</TableHead>
-                  <TableHead>Size</TableHead>
-                  <TableHead>Status</TableHead>
+                  <TableHead className="resource-name pl-6 max-sm:pl-4">
+                    File
+                  </TableHead>
+                  <TableHead className="resource-size">Size</TableHead>
+                  <TableHead className="resource-state">State</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -123,17 +103,22 @@ export function FileWorkspace({
                       selected?.id === item.id ? "selected" : undefined
                     }
                   >
-                    <TableCell className="pl-6">
+                    <TableCell className="resource-name pl-6 max-sm:pl-4">
                       <button
-                        className="text-left"
+                        className="resource-row-button"
                         onClick={() => navigate(item.id)}
                       >
                         <span className="row-title">{item.title}</span>
-                        <span className="row-sub">/f/{item.slug}</span>
+                        <span className="row-sub">
+                          <span className="compact-file-size">
+                            {formatBytes(item.bytes ?? 0)} ·{" "}
+                          </span>
+                          /f/{item.slug}
+                        </span>
                       </button>
                     </TableCell>
-                    <TableCell className="font-mono text-xs whitespace-nowrap">
-                      {((item.bytes ?? 0) / 1024 ** 2).toFixed(2)} MiB
+                    <TableCell className="resource-size font-mono text-xs whitespace-nowrap">
+                      {formatBytes(item.bytes ?? 0)}
                     </TableCell>
                     <TableCell>
                       <StatusBadge
@@ -151,9 +136,15 @@ export function FileWorkspace({
           ) : (
             <div className="empty-state">
               <h2>
-                {query ? "No matching files" : "Your files, ready to share."}
+                {query || state !== "all"
+                  ? "No matching files"
+                  : "Upload your first file"}
               </h2>
-              <p>Choose a file above. Uploads begin as private drafts.</p>
+              <p>
+                {query || state !== "all"
+                  ? "Try another search or filter."
+                  : "Uploads stay private until published."}
+              </p>
             </div>
           )}
           {page.nextCursor && (
@@ -166,24 +157,15 @@ export function FileWorkspace({
             </Button>
           )}
         </section>
-        {selected && (
-          <FileEditor
-            key={`${selected.id}:${selected.revision}`}
-            item={selected}
-            onClose={() => navigate()}
-            onSaved={() => router.refresh()}
-            onDeleted={() => {
-              router.replace("/admin/files");
-              router.refresh();
-            }}
-          />
-        )}
       </div>
     </>
   );
 }
+function fileFields(item: ResourceDto) {
+  return { title: item.title, expiresAt: item.expiresAt ?? "" };
+}
 function FileEditor({
-  item,
+  item: incoming,
   onClose,
   onSaved,
   onDeleted,
@@ -193,20 +175,30 @@ function FileEditor({
   onSaved: () => void;
   onDeleted: () => void;
 }) {
-  const initial = { title: item.title, expiresAt: item.expiresAt ?? "" };
-  const [form, setForm] = useState(initial);
-  useEditorGuard(JSON.stringify(form) !== JSON.stringify(initial));
-  const mutation = useMutation();
+  const editor = useEditor(incoming, fileFields);
+  const { form, setForm, mutation, saved: item } = editor;
   async function save(state: string) {
-    await mutation.run(async () => {
-      await api(`/api/admin/files/${item.id}`, "PATCH", {
+    const saved = await editor.save(() =>
+      api<ResourceDto>(`/api/admin/files/${item.id}`, "PATCH", {
         title: form.title,
         expiresAt: form.expiresAt || null,
         state,
         expectedRevision: item.revision,
-      });
-      onSaved();
-    });
+      }),
+    );
+    if (saved) onSaved();
+  }
+  async function changeState(state: "active" | "disabled") {
+    if (!item) return;
+    const saved = await editor.save(
+      () =>
+        api<ResourceDto>(`/api/admin/files/${item.id}/state`, "PATCH", {
+          state,
+          expectedRevision: item.revision,
+        }),
+      true,
+    );
+    if (saved) onSaved();
   }
   return (
     <aside className="inspector">
@@ -222,6 +214,31 @@ function FileEditor({
         </Button>
       </div>
       <div className="form-stack">
+        <EditorActions
+          dirty={editor.dirty}
+          pending={mutation.pending}
+          isNew={!editor.saved.id}
+        >
+          <Button
+            disabled={mutation.pending}
+            onClick={() => void save(item.state)}
+          >
+            Save changes
+          </Button>
+          {item.uploadState === "ready" && (
+            <Button
+              variant="outline"
+              disabled={mutation.pending}
+              onClick={() =>
+                void changeState(
+                  item.state === "active" ? "disabled" : "active",
+                )
+              }
+            >
+              {item.state === "active" ? "Disable" : "Publish file"}
+            </Button>
+          )}
+        </EditorActions>
         <StatusBadge
           state={
             item.uploadState !== "ready"
@@ -238,10 +255,11 @@ function FileEditor({
           <Button
             variant="outline"
             onClick={() => {
-              if (window.confirm("Reload and discard your edits?")) onSaved();
+              if (window.confirm("Reload and discard your edits?"))
+                window.location.reload();
             }}
           >
-            Reload saved version
+            Reload
           </Button>
         )}
         <FormField
@@ -274,29 +292,11 @@ function FileEditor({
           onChange={(v) => setForm({ ...form, expiresAt: v })}
           error={mutation.error?.fields?.expiresAt}
         />
-        <div className="form-actions">
-          <Button
-            disabled={mutation.pending}
-            onClick={() => void save(item.state)}
-          >
-            Save changes
-          </Button>
-          {item.uploadState === "ready" && (
-            <Button
-              variant="outline"
-              disabled={mutation.pending}
-              onClick={() =>
-                void save(item.state === "active" ? "disabled" : "active")
-              }
-            >
-              {item.state === "active" ? "Disable" : "Publish file"}
-            </Button>
-          )}
-        </div>
+
         <p className="muted">
           {item.uploadState === "ready"
-            ? "Published files are unlisted. Anyone with the address can download them."
-            : "This upload is not ready. Retry from the upload control or delete this attempt."}
+            ? "Anyone with the address can download published files."
+            : "Upload incomplete. Retry the upload or delete this file."}
         </p>
         <div className="form-actions">
           <ShareDialog

@@ -16,7 +16,7 @@ export function BusinessCardView({
 }) {
   return (
     <article className="business-card">
-      <div className="bg-primary h-1 w-10" />
+      <div className="card-rule" aria-hidden="true" />
       {card.avatarBlobId && (
         <Image
           src={
@@ -31,7 +31,11 @@ export function BusinessCardView({
           className="mt-7 h-22 w-22 rounded-sm object-cover"
         />
       )}
-      <h1>{card.displayName || "Your name"}</h1>
+      {preview ? (
+        <h2>{card.displayName || "Your name"}</h2>
+      ) : (
+        <h1>{card.displayName || "Your name"}</h1>
+      )}
       {(card.role || card.organization) && (
         <p className="text-sm">
           {[card.role, card.organization].filter(Boolean).join(" · ")}

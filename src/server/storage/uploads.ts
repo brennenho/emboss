@@ -148,7 +148,7 @@ export async function initiateUpload(
         throw new AppError(
           409,
           "SLUG_TAKEN",
-          "This address is already reserved.",
+          "This address is already in use.",
           { slug: "Choose another address." },
         );
       }
@@ -163,7 +163,7 @@ export async function initiateUpload(
       throw new AppError(
         409,
         "QUOTA_EXCEEDED",
-        "Storage is full, including pending uploads and retained deletions.",
+        "Storage is full. Uploads and deleted files awaiting cleanup also count.",
       );
     if (saved.request_hash !== hash || saved.operation !== operation)
       throw new AppError(
@@ -176,7 +176,7 @@ export async function initiateUpload(
   throw new AppError(
     503,
     "UNAVAILABLE",
-    "Could not allocate an address. Try again.",
+    "Could not create an address. Try again.",
   );
 }
 export function inspectImage(

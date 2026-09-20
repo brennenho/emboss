@@ -2,6 +2,7 @@ import { pageOwner } from "@/server/runtime";
 import { ownerList, ownerResource } from "@/server/owner";
 import { config } from "@/server/config";
 import { LinkWorkspace } from "@/features/links/link-workspace";
+export const metadata = { title: "Links" };
 export default async function LinksPage({
   searchParams,
 }: {

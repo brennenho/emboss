@@ -19,6 +19,11 @@ export function CopyButton({
   label?: string;
 }) {
   const [status, setStatus] = useState("");
+  useEffect(() => {
+    if (status !== "Copied") return;
+    const timer = window.setTimeout(() => setStatus(""), 2000);
+    return () => window.clearTimeout(timer);
+  }, [status]);
   return (
     <>
       <Button
@@ -29,14 +34,14 @@ export function CopyButton({
         title={label}
         onClick={() => {
           if (!navigator.clipboard) {
-            setStatus("Could not copy; select the text manually.");
+            setStatus("Could not copy. Select and copy the text.");
             return;
           }
           void navigator.clipboard
             .writeText(value)
             .then(() => setStatus("Copied"))
             .catch(() =>
-              setStatus("Could not copy; select the text manually."),
+              setStatus("Could not copy. Select and copy the text."),
             );
         }}
       >
@@ -44,7 +49,7 @@ export function CopyButton({
       </Button>
       <span
         role="status"
-        className={status === "Copied" ? "sr-only" : "text-xs"}
+        className={!status || status === "Copied" ? "sr-only" : "copy-error"}
       >
         {status}
       </span>
@@ -54,7 +59,7 @@ export function CopyButton({
 export function AddressPlate({ url }: { url: string }) {
   return (
     <div className="address-plate">
-      <span>{url}</span>
+      <code className="address-value">{url}</code>
       <CopyButton value={url} />
     </div>
   );
@@ -95,7 +100,7 @@ export function ShareDialog({
       .catch(() => {
         if (!cancelled)
           setError(
-            "Could not generate the QR code. Close this dialog and try again.",
+            "Could not create the QR code. Reopen this dialog to retry.",
           );
       });
     return () => {
@@ -126,7 +131,7 @@ export function ShareDialog({
           <DialogDescription>
             {state === "active"
               ? "Anyone with this address can open it."
-              : `This item is ${state}. Its address is not currently public.`}
+              : `Not public · ${state}`}
           </DialogDescription>
         </DialogHeader>
         <AddressPlate url={url} />

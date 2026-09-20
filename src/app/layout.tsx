@@ -26,7 +26,14 @@ const barlow = localFont({
 export const metadata: Metadata = {
   title: { default: "Emboss", template: "%s · Emboss" },
   robots: { index: false, follow: false },
-  icons: { icon: "/icon.svg" },
+  applicationName: "Emboss",
+  icons: {
+    icon: [
+      { url: "/icon.svg", type: "image/svg+xml" },
+      { url: "/favicon.ico", sizes: "32x32" },
+    ],
+    apple: [{ url: "/apple-touch-icon.png", sizes: "180x180" }],
+  },
 };
 export const dynamic = "force-dynamic";
 export default async function RootLayout({

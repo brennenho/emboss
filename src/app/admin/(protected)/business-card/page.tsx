@@ -3,6 +3,7 @@ import { readCard, readScheduling } from "@/server/configuration-store";
 import { ownerSettings } from "@/server/owner";
 import { config } from "@/server/config";
 import { CardWorkspace } from "@/features/card/card-workspace";
+export const metadata = { title: "Business card" };
 export default async function Page() {
   const { env } = await pageOwner();
   const [card, scheduling, settings] = await Promise.all([
@@ -12,7 +13,6 @@ export default async function Page() {
   ]);
   return (
     <CardWorkspace
-      key={card.revision}
       data={card}
       origin={config(env).origin}
       schedulingEnabled={scheduling.enabled}

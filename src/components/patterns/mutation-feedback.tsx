@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { ApiError } from "@/shared/client-api";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
@@ -13,11 +13,13 @@ import {
 import { Button } from "@/components/ui/button";
 import { PasswordForm } from "@/features/auth/password-form";
 export function useMutation() {
+  const running = useRef(false);
   const [error, setError] = useState<ApiError | null>(null),
     [pending, setPending] = useState(false),
     [notice, setNotice] = useState("");
   async function run<T>(action: () => Promise<T>): Promise<T | undefined> {
-    if (pending) return;
+    if (running.current) return;
+    running.current = true;
     setPending(true);
     setError(null);
     setNotice("");
@@ -32,10 +34,11 @@ export function useMutation() {
               "FAILED",
               error instanceof Error
                 ? error.message
-                : "The action failed. Try again.",
+                : "Could not complete the action. Try again.",
             ),
       );
     } finally {
+      running.current = false;
       setPending(false);
     }
   }
@@ -68,8 +71,7 @@ export function MutationFeedback({
                   <DialogHeader>
                     <DialogTitle>Continue editing</DialogTitle>
                     <DialogDescription>
-                      Sign in, then retry your changes. Your draft is still
-                      here.
+                      Sign in to continue. Your edits are still here.
                     </DialogDescription>
                   </DialogHeader>
                   <PasswordForm

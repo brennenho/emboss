@@ -2,6 +2,7 @@ import { pageOwner } from "@/server/runtime";
 import { ownerList, ownerResource, ownerSettings } from "@/server/owner";
 import { config } from "@/server/config";
 import { FileWorkspace } from "@/features/files/file-workspace";
+export const metadata = { title: "Files" };
 export default async function Page({
   searchParams,
 }: {

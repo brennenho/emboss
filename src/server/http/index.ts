@@ -1,6 +1,7 @@
 import { ZodError, type ZodTypeAny, type output } from "zod";
 import { AppError } from "../../shared/errors";
 import { config, type Env } from "../config";
+import { failureCategory } from "../../shared/diagnostics";
 
 export const privateHeaders = {
   "Cache-Control": "no-store",
@@ -74,12 +75,14 @@ export async function readJson<T extends ZodTypeAny>(
   return schema.parse(value);
 }
 export async function endpoint(
+  operation: string,
   action: () => Promise<Response>,
 ): Promise<Response> {
   const requestId = crypto.randomUUID();
   try {
     const response = await action();
-    response.headers.set("X-Request-Id", requestId);
+    if (!response.headers.has("X-Request-Id"))
+      response.headers.set("X-Request-Id", requestId);
     return response;
   } catch (error) {
     let appError: AppError;
@@ -95,7 +98,12 @@ export async function endpoint(
       );
     else {
       console.error(
-        JSON.stringify({ operation: "request", status: 503, requestId }),
+        JSON.stringify({
+          operation,
+          category: failureCategory(error),
+          status: 503,
+          requestId,
+        }),
       );
       appError = new AppError(
         503,

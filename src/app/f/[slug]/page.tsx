@@ -4,6 +4,7 @@ import { bindings } from "@/server/runtime";
 import { findFile } from "@/server/storage/downloads";
 import { slugSchema } from "@/shared/resources";
 import { Button } from "@/components/ui/button";
+import { formatBytes } from "@/shared/format";
 export const dynamic = "force-dynamic";
 export default async function Page({
   params,
@@ -20,8 +21,7 @@ export default async function Page({
         <div>
           <h1>{file.title}</h1>
           <p className="public-meta">
-            {file.original_filename} ·{" "}
-            {(file.expected_bytes / 1024 ** 2).toFixed(2)} MiB
+            {file.original_filename} · {formatBytes(file.expected_bytes)}
             {file.expires_at
               ? ` · Expires ${new Date(file.expires_at).toISOString().slice(0, 16).replace("T", " ")} UTC`
               : ""}
@@ -44,8 +44,9 @@ export default async function Page({
         />
       ) : (
         <div className="quiet-panel">
-          <h2>Ready to download</h2>
-          <p className="muted mt-2">This file is available as an attachment.</p>
+          <p className="muted">
+            No preview available. Download to open this file.
+          </p>
         </div>
       )}
     </main>

@@ -4,7 +4,7 @@ import { serveBlob } from "@/server/storage/downloads";
 import type { BlobRow } from "@/server/storage/uploads";
 export const dynamic = "force-dynamic";
 export function GET(request: Request) {
-  return endpoint(async () => {
+  return endpoint("GET /api/admin/business-card/avatar/preview", async () => {
     const { env } = await ownerContext(request);
     const id = new URL(request.url).searchParams.get("id");
     const blob = id

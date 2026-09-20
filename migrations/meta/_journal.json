@@ -15,6 +15,13 @@
       "when": 1789696417103,
       "tag": "0001_atomic_password_rotation",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1789774045578,
+      "tag": "0002_reusable_short_addresses",
+      "breakpoints": true
     }
   ]
 }

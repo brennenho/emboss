@@ -1,4 +1,5 @@
 import { defineConfig, devices } from "@playwright/test";
+const origin = process.env.EMBOSS_TEST_ORIGIN ?? "http://127.0.0.1:8787";
 export default defineConfig({
   testDir: "tests/e2e",
   fullyParallel: false,
@@ -8,7 +9,7 @@ export default defineConfig({
   retries: 0,
   reporter: "list",
   use: {
-    baseURL: "http://127.0.0.1:8787",
+    baseURL: origin,
     trace: "retain-on-failure",
     actionTimeout: 15000,
     navigationTimeout: 20000,
@@ -26,7 +27,7 @@ export default defineConfig({
   ],
   webServer: {
     command: "pnpm preview:start",
-    url: "http://127.0.0.1:8787/admin/login",
+    url: `${origin}/admin/login`,
     reuseExistingServer: !process.env.CI,
     timeout: 120000,
   },

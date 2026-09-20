@@ -31,10 +31,17 @@ export function FormField({
     </Field>
   );
 }
-export function fieldProps(id: string, errors?: Record<string, string>) {
+export function fieldProps(
+  id: string,
+  errors?: Record<string, string>,
+  hasHelp = false,
+) {
   return {
     id,
     "aria-invalid": !!errors?.[id],
-    "aria-describedby": errors?.[id] ? `${id}-error` : undefined,
+    "aria-describedby":
+      [hasHelp && `${id}-help`, errors?.[id] && `${id}-error`]
+        .filter(Boolean)
+        .join(" ") || undefined,
   };
 }

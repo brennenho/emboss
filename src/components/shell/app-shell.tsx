@@ -13,6 +13,7 @@ import {
   KeyRound,
   ChevronUp,
   LogOut,
+  X,
 } from "lucide-react";
 import {
   Sidebar,
@@ -40,6 +41,8 @@ import {
   useNavigationGuard,
 } from "@/components/patterns/navigation-guard";
 import { api } from "@/shared/client-api";
+import { Brand } from "./brand";
+import { Button } from "@/components/ui/button";
 const tools = [
   ["links", "Links", Link2],
   ["pastes", "Pastes", FileCode2],
@@ -63,35 +66,48 @@ function Navigation({
     [pending, setPending] = useState(false);
   return (
     <Sidebar collapsible="offcanvas">
-      <SidebarHeader className="px-6 pt-8 pb-7">
-        <div className="wordmark">
-          <span className="mark" aria-hidden="true" />
-          EMBOSS
+      <SidebarHeader className="brand-header px-5 py-4">
+        <div className="flex items-center justify-between gap-3">
+          <Brand />
+          <Button
+            variant="ghost"
+            size="icon"
+            className="md:hidden"
+            aria-label="Close navigation"
+            onClick={() => setOpenMobile(false)}
+          >
+            <X />
+          </Button>
         </div>
-        <p className="text-muted-foreground mt-3 font-mono text-xs break-all">
+        <p className="brand-host" title={host}>
           {host}
         </p>
         {label !== "Emboss" && <p className="muted">{label}</p>}
       </SidebarHeader>
-      <SidebarContent className="px-3">
-        <SidebarMenu>
-          {tools.map(([path, name, Icon]) => (
-            <SidebarMenuItem key={path}>
-              <SidebarMenuButton
-                asChild
-                isActive={pathname === `/admin/${path}`}
-              >
-                <Link
-                  href={`/admin/${path}`}
-                  onClick={() => setOpenMobile(false)}
+      <SidebarContent className="px-3 py-5">
+        <nav aria-label="Tools">
+          <SidebarMenu>
+            {tools.map(([path, name, Icon]) => (
+              <SidebarMenuItem key={path}>
+                <SidebarMenuButton
+                  asChild
+                  isActive={pathname === `/admin/${path}`}
                 >
-                  <Icon />
-                  <span>{name}</span>
-                </Link>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-          ))}
-        </SidebarMenu>
+                  <Link
+                    href={`/admin/${path}`}
+                    aria-current={
+                      pathname === `/admin/${path}` ? "page" : undefined
+                    }
+                    onClick={() => setOpenMobile(false)}
+                  >
+                    <Icon />
+                    <span>{name}</span>
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            ))}
+          </SidebarMenu>
+        </nav>
       </SidebarContent>
       <SidebarFooter className="gap-3 px-3 pb-5">
         <SidebarMenu>
@@ -100,7 +116,13 @@ function Navigation({
               asChild
               isActive={pathname === "/admin/settings"}
             >
-              <Link href="/admin/settings" onClick={() => setOpenMobile(false)}>
+              <Link
+                href="/admin/settings"
+                aria-current={
+                  pathname === "/admin/settings" ? "page" : undefined
+                }
+                onClick={() => setOpenMobile(false)}
+              >
                 <Settings2 />
                 <span>Settings</span>
               </Link>
@@ -172,12 +194,18 @@ export function AppShell({
   }, []);
   return (
     <NavigationGuard>
+      <a className="skip-link" href="#workspace">
+        Skip to workspace
+      </a>
       <SidebarProvider open={true} onOpenChange={() => {}}>
         <Navigation host={host} label={label} expiresAt={expiresAt} />
-        <SidebarInset className="min-w-0">
-          <div className="flex items-center gap-3 border-b p-3 md:hidden">
+        <SidebarInset className="min-w-0" id="workspace" tabIndex={-1}>
+          <div className="mobile-bar md:hidden">
             <SidebarTrigger aria-label="Open navigation" />
-            <span className="font-mono text-xs">{host}</span>
+            <Brand compact />
+            <span className="brand-host" title={host}>
+              {host}
+            </span>
           </div>
           {children}
         </SidebarInset>

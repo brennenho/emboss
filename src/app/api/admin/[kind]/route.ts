@@ -8,7 +8,7 @@ const kinds = { links: "link", pastes: "paste", files: "file" } as const;
 type Context = { params: Promise<{ kind: string }> };
 export const dynamic = "force-dynamic";
 export function GET(request: Request, context: Context) {
-  return endpoint(async () => {
+  return endpoint("GET /api/admin/[kind]", async () => {
     await ownerContext(request);
     const { kind } = await context.params;
     if (!Object.hasOwn(kinds, kind))
@@ -23,7 +23,7 @@ export function GET(request: Request, context: Context) {
   });
 }
 export function POST(request: Request, context: Context) {
-  return endpoint(async () => {
+  return endpoint("POST /api/admin/[kind]", async () => {
     const env = bindings();
     checkIntent(request, env);
     await ownerContext(request);

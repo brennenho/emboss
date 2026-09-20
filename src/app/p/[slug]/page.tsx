@@ -1,7 +1,11 @@
 import { notFound } from "next/navigation";
 import { bindings } from "@/server/runtime";
 import { publicResource, resourceDto } from "@/server/resource-store";
-import { slugSchema } from "@/shared/resources";
+import {
+  slugSchema,
+  pasteFormatLabels,
+  pasteLanguageLabels,
+} from "@/shared/resources";
 import { PasteContent } from "@/features/pastes/paste-content";
 import { CopyButton } from "@/components/sharing/share-dialog";
 import { Button } from "@/components/ui/button";
@@ -23,7 +27,9 @@ export default async function Page({
         <div>
           <h1>{paste.title}</h1>
           <p className="public-meta">
-            {paste.format} · {paste.language}
+            {paste.format === "code"
+              ? (pasteLanguageLabels[paste.language ?? "text"] ?? "Code")
+              : pasteFormatLabels[paste.format ?? "text"]}
             {paste.expiresAt
               ? ` · Expires ${paste.expiresAt.slice(0, 16).replace("T", " ")} UTC`
               : ""}
@@ -32,7 +38,7 @@ export default async function Page({
         <div className="flex gap-2">
           <CopyButton value={paste.body ?? ""} label="Copy content" />
           <Button asChild variant="outline">
-            <a href={`/p/${slug}/raw`}>Raw</a>
+            <a href={`/p/${slug}/raw`}>Raw text</a>
           </Button>
         </div>
       </header>

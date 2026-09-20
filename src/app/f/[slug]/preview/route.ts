@@ -7,7 +7,7 @@ export function GET(
   request: Request,
   { params }: { params: Promise<{ slug: string }> },
 ) {
-  return endpoint(async () => {
+  return endpoint("GET /f/[slug]/preview", async () => {
     const env = bindings();
     const value = (await params).slug;
     if (!slugSchema.safeParse(value).success) return unavailable();

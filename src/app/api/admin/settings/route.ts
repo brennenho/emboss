@@ -11,13 +11,13 @@ import { saveSettings } from "@/server/configuration-store";
 import { ownerSettings } from "@/server/owner";
 export const dynamic = "force-dynamic";
 export function GET(request: Request) {
-  return endpoint(async () => {
+  return endpoint("GET /api/admin/settings", async () => {
     await ownerContext(request);
     return json(await ownerSettings(request));
   });
 }
 export function PATCH(request: Request) {
-  return endpoint(async () => {
+  return endpoint("PATCH /api/admin/settings", async () => {
     const { env } = await ownerContext(request);
     checkIntent(request, env);
     await checkWrite(env);

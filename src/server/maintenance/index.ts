@@ -81,20 +81,20 @@ export async function maintenance(env: Env, now = Date.now()) {
     }
   }
   const cutoff = now - config(env).DELETION_RETENTION_DAYS * 86400000;
-  const tombstones =
+  const deletedResources =
     "SELECT id FROM resources WHERE deleted_at IS NOT NULL AND deleted_at<=? AND (title!='' OR expires_at IS NOT NULL) LIMIT 100";
   await env.DB.batch([
     env.DB.prepare(
-      `DELETE FROM links WHERE resource_id IN (${tombstones})`,
+      `DELETE FROM links WHERE resource_id IN (${deletedResources})`,
     ).bind(cutoff),
     env.DB.prepare(
-      `DELETE FROM pastes WHERE resource_id IN (${tombstones})`,
+      `DELETE FROM pastes WHERE resource_id IN (${deletedResources})`,
     ).bind(cutoff),
     env.DB.prepare(
-      `UPDATE files SET original_filename='' WHERE resource_id IN (${tombstones})`,
+      `UPDATE files SET original_filename='' WHERE resource_id IN (${deletedResources})`,
     ).bind(cutoff),
     env.DB.prepare(
-      `UPDATE resources SET title='',expires_at=NULL WHERE id IN (${tombstones})`,
+      `UPDATE resources SET title='',expires_at=NULL WHERE id IN (${deletedResources})`,
     ).bind(cutoff),
     env.DB.prepare(
       "DELETE FROM admin_sessions WHERE token_hash IN (SELECT token_hash FROM admin_sessions WHERE expires_at<=? LIMIT 100)",
