@@ -2,7 +2,7 @@
 /* eslint-disable @next/next/no-html-link-for-pages */
 import { webUrl } from "@/shared/resources";
 import Image from "next/image";
-import { ArrowUpRight, Download, CalendarDays } from "lucide-react";
+import { ArrowUpRight, Download, CalendarDays, UserRound } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { CardData } from "@/shared/configuration";
 export function BusinessCardView({
@@ -14,10 +14,18 @@ export function BusinessCardView({
   schedulingEnabled: boolean;
   preview?: boolean;
 }) {
+  const initials = card.displayName
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0])
+    .join("")
+    .toUpperCase();
   return (
     <article className="business-card">
       <div className="card-rule" aria-hidden="true" />
-      {card.avatarBlobId && (
+      {card.avatarBlobId ? (
         <Image
           src={
             preview
@@ -30,6 +38,10 @@ export function BusinessCardView({
           height={88}
           className="mt-7 h-22 w-22 rounded-sm object-cover"
         />
+      ) : (
+        <div className="avatar-initials" aria-hidden="true">
+          {initials || <UserRound size={32} strokeWidth={1.25} />}
+        </div>
       )}
       {preview ? (
         <h2>{card.displayName || "Your name"}</h2>

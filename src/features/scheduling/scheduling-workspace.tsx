@@ -1,4 +1,5 @@
 "use client";
+import { ConflictRecovery } from "@/components/patterns/conflict-recovery";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -27,6 +28,10 @@ export function SchedulingWorkspace({
       <header className="workspace-header">
         <div>
           <h1>Scheduling</h1>
+          <p className="muted">
+            A permanent address for your booking page, even if you switch
+            providers.
+          </p>
         </div>
       </header>
       <div className="config-workspace">
@@ -55,25 +60,19 @@ export function SchedulingWorkspace({
         >
           <h2>Booking destination</h2>
           <EditorActions dirty={dirty} pending={mutation.pending}>
-            <Button disabled={mutation.pending}>
+            <Button disabled={mutation.pending || !dirty}>
               {mutation.pending ? "Saving…" : "Save changes"}
             </Button>
-            {mutation.error?.status === 409 && (
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => {
-                  if (window.confirm("Reload and discard your edits?"))
-                    window.location.reload();
-                }}
-              >
-                Reload
-              </Button>
-            )}
           </EditorActions>
           <MutationFeedback
             {...mutation}
             onReauthenticated={() => mutation.setError(null)}
+          />
+          <ConflictRecovery
+            error={mutation.error}
+            draft={form}
+            loadLatest={() => api<SchedulingData>("/api/admin/scheduling")}
+            onUseLatest={editor.reset}
           />
           <FormField
             id="providerLabel"
@@ -109,8 +108,8 @@ export function SchedulingWorkspace({
           </FormField>
           <ToggleField
             id="enabled"
-            label="Enable scheduling"
-            help="Redirect /meet to your booking page."
+            label="Share booking page"
+            help="Anyone with your scheduling address can open the booking page."
             checked={form.enabled}
             onChange={(v) => setForm({ ...form, enabled: v })}
           />

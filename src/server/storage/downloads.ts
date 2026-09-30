@@ -107,3 +107,34 @@ export async function serveBlob(
   if (!object) return unavailable();
   return new Response(object.body, { status: range ? 206 : 200, headers });
 }
+
+const TEXT_PREVIEW_BYTES = 64 * 1024;
+const textFilename =
+  /\.(?:txt|md|markdown|csv|tsv|json|jsonl|log|yaml|yml|toml|ini|xml|html?|svg|css|[cm]?js|jsx|tsx?|py|sql|sh|bash|rs|go|java|rb|c|h|cpp)$/i;
+
+// Read a bounded prefix only. The caller must first resolve this file through
+// findFile's public availability gate. Render the result as text, never HTML.
+export async function fileTextPreview(env: Env, file: FileObject) {
+  if (file.state !== "ready" || !textFilename.test(file.original_filename))
+    return null;
+  const object = await env.FILES.get(file.object_key, {
+    range: { offset: 0, length: TEXT_PREVIEW_BYTES },
+  });
+  if (!object || object.size !== file.expected_bytes) {
+    await object?.body.cancel();
+    return null;
+  }
+  const bytes = new Uint8Array(await object.arrayBuffer());
+  const truncated = file.expected_bytes > TEXT_PREVIEW_BYTES;
+  let text: string;
+  try {
+    // A truncated final UTF-8 character is left out, not shown as corruption.
+    text = new TextDecoder("utf-8", { fatal: true }).decode(bytes, {
+      stream: truncated,
+    });
+  } catch {
+    return null;
+  }
+  if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(text)) return null;
+  return { text, truncated };
+}

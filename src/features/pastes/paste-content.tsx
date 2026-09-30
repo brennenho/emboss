@@ -1,6 +1,9 @@
+import dynamic from "next/dynamic";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeSanitize from "rehype-sanitize";
+
+const CodePreview = dynamic(() => import("./code-preview"));
 
 const schema = {
   tagNames: [
@@ -41,10 +44,13 @@ const schema = {
 export function PasteContent({
   body,
   format,
+  language = "text",
 }: {
   body: string;
   format: string;
+  language?: string;
 }) {
+  if (format === "code") return <CodePreview body={body} language={language} />;
   if (format !== "markdown")
     return (
       <pre className="overflow-auto font-mono text-sm leading-7 break-words whitespace-pre-wrap">

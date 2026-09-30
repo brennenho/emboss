@@ -1,3 +1,5 @@
+import type { Metadata } from "next";
+import { cache } from "react";
 import { notFound } from "next/navigation";
 import { bindings } from "@/server/runtime";
 import { publicResource, resourceDto } from "@/server/resource-store";
@@ -10,17 +12,28 @@ import { PasteContent } from "@/features/pastes/paste-content";
 import { CopyButton } from "@/components/sharing/share-dialog";
 import { Button } from "@/components/ui/button";
 export const dynamic = "force-dynamic";
+const readPaste = cache(async (slug: string) => {
+  if (!slugSchema.safeParse(slug).success) return null;
+  const env = bindings();
+  const row = await publicResource(env, "paste", slug);
+  return row ? resourceDto(env, row, true) : null;
+});
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ slug: string }>;
+}): Promise<Metadata> {
+  const paste = await readPaste((await params).slug);
+  return { title: paste?.title ?? "Link unavailable" };
+}
 export default async function Page({
   params,
 }: {
   params: Promise<{ slug: string }>;
 }) {
   const { slug } = await params;
-  if (!slugSchema.safeParse(slug).success) notFound();
-  const env = bindings();
-  const row = await publicResource(env, "paste", slug);
-  if (!row) notFound();
-  const paste = await resourceDto(env, row, true);
+  const paste = await readPaste(slug);
+  if (!paste) notFound();
   return (
     <main className="public-page">
       <header className="public-header">
@@ -42,7 +55,13 @@ export default async function Page({
           </Button>
         </div>
       </header>
-      <PasteContent body={paste.body ?? ""} format={paste.format ?? "text"} />
+      <section className="public-document" aria-label="Shared content">
+        <PasteContent
+          body={paste.body ?? ""}
+          format={paste.format ?? "text"}
+          language={paste.language ?? "text"}
+        />
+      </section>
     </main>
   );
 }

@@ -12,10 +12,23 @@ export function json(value: unknown, status = 200) {
   return Response.json(value, { status, headers: privateHeaders });
 }
 export function unavailable() {
-  return new Response("This share is unavailable", {
-    status: 404,
-    headers: { ...privateHeaders, "Content-Type": "text/plain; charset=utf-8" },
-  });
+  return new Response(
+    `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>Link unavailable · Emboss</title>
+<style>html{color-scheme:light}*{box-sizing:border-box}body{margin:0;background:#f7f5f0;color:#292722;font:16px/1.6 system-ui,sans-serif}main{max-width:36rem;margin:clamp(4rem,18vh,10rem) auto;padding:2rem}.mark{font-size:.8rem;font-weight:600;letter-spacing:.13em;text-transform:uppercase;color:#766f64}.rule{width:2.5rem;height:3px;margin:2.5rem 0;background:#b44e2e}h1{font-size:clamp(1.75rem,6vw,2.5rem);line-height:1.2;font-weight:500;letter-spacing:-.03em}p{color:#665f55;max-width:29rem}</style></head>
+<body><main><span class="mark">Emboss</span><div class="rule" aria-hidden="true"></div><h1>This link is no longer available.</h1><p>Ask the person who shared it for a new one.</p></main></body></html>`,
+    {
+      status: 404,
+      headers: {
+        ...privateHeaders,
+        "Content-Type": "text/html; charset=utf-8",
+        "Content-Security-Policy":
+          "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'",
+        "Referrer-Policy": "no-referrer",
+        "X-Frame-Options": "DENY",
+      },
+    },
+  );
 }
 export function checkIntent(
   request: Request,
