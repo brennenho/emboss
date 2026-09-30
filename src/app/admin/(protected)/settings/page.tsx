@@ -1,19 +1,22 @@
 import { pageOwner } from "@/server/runtime";
 import { ownerSettings } from "@/server/owner";
 import { storageUsage } from "@/server/storage/uploads";
+import { readMaintenanceHealth } from "@/server/maintenance/health";
 import { config } from "@/server/config";
 import { SettingsWorkspace } from "@/features/settings/settings-workspace";
 export const metadata = { title: "Settings" };
 export default async function Page() {
   const { env, session } = await pageOwner();
-  const [settings, usage] = await Promise.all([
+  const [settings, usage, health] = await Promise.all([
     ownerSettings(),
     storageUsage(env),
+    readMaintenanceHealth(env),
   ]);
   const c = config(env);
   return (
     <SettingsWorkspace
       data={settings}
+      health={health}
       origin={c.origin}
       usage={usage!}
       ceilings={{

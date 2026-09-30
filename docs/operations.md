@@ -110,14 +110,40 @@ at minute 17 UTC. It reconciles completed uploads, expires abandoned reservation
 purges due retained objects/content, and removes expired session/idempotency rows.
 Deletion failures remain queued. Active or merely expired files are never purged.
 
+Settings → Advanced → Automatic cleanup shows recorded start/success times, failed
+operation references, queued tasks, overdue tasks, and reclaimed bytes. It does not
+infer backup dates. Queue counts are cleanup tasks: a deleted file can contribute
+both a content task and an object task until its content is purged. Future retention
+deadlines are expected; work overdue by two hours and a cleanup run missing for two
+hours need attention. The first deployment shows “No cleanup recorded yet” until
+Cron runs. Read-only mode intentionally pauses the job and all status writes.
+
+Migration `0005_maintenance_health.sql` adds the cleanup status table. Apply the
+address/Trash migration `0004` first. Each run processes at most 25 abandoned
+uploads, 25 staged avatars, 100 expired retained resources, 25 object deletions,
+and 100 expired rows per credential/idempotency table. A 15-minute run lease avoids
+ordinary overlapping jobs; interrupted jobs are retried. Object cleanup claims
+the blob before touching R2, so a restoration cannot race an irreversible delete.
+Failures store only operation names, opaque item IDs, and the run ID; error text,
+object keys, filenames, and content are excluded.
+
+Trash is available in the admin navigation. Restoring an eligible item returns it
+to the library paused; its expiry is kept, and publication still needs an explicit
+action. Each item stores its recovery deadline when deleted, so changing the
+retention setting does not silently change existing deadlines. Permanent deletion
+ends recovery immediately and reserves the old address. File bytes remain counted
+until object cleanup succeeds. A missing or already claimed object cannot be
+restored; failed cleanup stays queued and visible in the status panel.
+
 To exercise the real local scheduled handler while preview is running:
 
 ```sh
 curl 'http://127.0.0.1:8787/cdn-cgi/local/scheduled?format=json'
 ```
 
-A successful result has `outcome: "ok"`. This is Wrangler's local test endpoint,
-not an application route. [Cloudflare scheduled-handler documentation](https://developers.cloudflare.com/workers/runtime-apis/handlers/scheduled/).
+A result with `outcome: "ok"` means the handler finished. Check Settings → Advanced
+→ Automatic cleanup for individual failures: a completed run can still have queued
+retries. This is Wrangler's local test endpoint, not an application route. [Cloudflare scheduled-handler documentation](https://developers.cloudflare.com/workers/runtime-apis/handlers/scheduled/).
 
 Review D1/R2 failures, cleanup failures, request latency, and Worker CPU exceptions.
 Application errors include safe operation names, status, and request IDs; do not

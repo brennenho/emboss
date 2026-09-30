@@ -228,3 +228,19 @@ export const idempotencyKeys = sqliteTable(
   },
   (t) => [index("idempotency_expiry").on(t.expiresAt)],
 );
+
+export const maintenanceHealth = sqliteTable(
+  "maintenance_health",
+  {
+    id: integer().primaryKey().default(1),
+    runId: text("run_id").notNull(),
+    startedAt: integer("started_at").notNull(),
+    finishedAt: integer("finished_at"),
+    succeededAt: integer("succeeded_at"),
+    failureCount: integer("failure_count").notNull().default(0),
+    failures: text().notNull().default("[]"),
+    reclaimedBytes: integer("reclaimed_bytes").notNull().default(0),
+    totalReclaimedBytes: integer("total_reclaimed_bytes").notNull().default(0),
+  },
+  (t) => [check("maintenance_singleton", sql`${t.id}=1`)],
+);
