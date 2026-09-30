@@ -9,7 +9,9 @@ import AxeBuilder from "@axe-core/playwright";
 import { PNG } from "pngjs";
 import jsQR from "jsqr";
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readFile, chmod, mkdir, stat } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 const origin = process.env.EMBOSS_TEST_ORIGIN ?? "http://127.0.0.1:8787",
   password = "Emboss local test password 2026!";
 const headers = {
@@ -17,24 +19,46 @@ const headers = {
   "X-Emboss-Request": "1",
   "Content-Type": "application/json",
 };
-const png = Buffer.from(
-  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j0u8AAAAASUVORK5CYII=",
-  "base64",
-);
+const portrait = new PNG({ width: 16, height: 16 });
+portrait.data.fill(255);
+const png = PNG.sync.write(portrait);
 let context: BrowserContext, page: Page, request: APIRequestContext;
 let slug: string;
 const errors: string[] = [];
-test.describe.configure({ mode: "serial" });
+
 test.beforeAll(async ({ browser }, info) => {
-  context = await browser.newContext(info.project.use);
-  page = await context.newPage();
+  // Keep one disposable fixture session across worker restarts so a failed
+  // scenario does not exhaust the login limiter or skip unrelated coverage.
+  const authDirectory = join(tmpdir(), "emboss-e2e-auth");
+  await mkdir(authDirectory, { recursive: true, mode: 0o700 });
+  const authPath = join(
+    authDirectory,
+    `${createHash("sha256").update(origin).digest("hex").slice(0, 12)}-${info.project.name}.json`,
+  );
+  const savedAuth = await stat(authPath)
+    .then(() => authPath)
+    .catch(() => undefined);
+  context = await browser.newContext({
+    ...info.project.use,
+    storageState: savedAuth,
+  });
   request = context.request;
+  page = await context.newPage();
+  if ((await request.get("/api/admin/links")).status() !== 200) {
+    await page.goto("/admin/login");
+    await page.getByLabel("Admin password").fill(password);
+    await page.getByRole("button", { name: "Sign in", exact: true }).click();
+    await expect(page).toHaveURL(/\/admin\/links/);
+    await context.storageState({ path: authPath });
+    await chmod(authPath, 0o600);
+  }
+});
+test.beforeEach(async ({}, info) => {
+  await page?.close();
+  page = await context.newPage();
+  errors.length = 0;
   slug = `e2e-${Date.now().toString(36)}-${info.project.name}`;
-  await page.goto("/admin/login");
-  await page.getByLabel("Admin password").fill(password);
-  await page.getByRole("button", { name: "Sign in", exact: true }).click();
-  await expect(page).toHaveURL(/\/admin\/links/);
-  page.on("pageerror", (e) => errors.push(e.message));
+  page.on("pageerror", (error) => errors.push(error.message));
 });
 test.afterAll(async () => {
   await context?.close();
@@ -138,87 +162,123 @@ test("private pages and APIs enforce authorization and request intent", async ({
     expect((await anonymous.get(path, { maxRedirects: 0 })).status()).toBe(404);
   await anonymous.dispose();
 });
-test("creates a four-character link from only its destination and reuses it after deletion", async () => {
+test("creates a short link, restores it paused, and permanently reserves its address", async () => {
   await page.goto("/admin/links?item=new");
   await expect(
-    page.getByRole("group", { name: "Optional", exact: true }),
+    page.getByRole("textbox", { name: "Label", exact: true }),
+  ).not.toBeVisible();
+  await page
+    .getByRole("textbox", { name: "Destination URL", exact: true })
+    .fill("https://example.org/first");
+  await page
+    .getByRole("button", { name: "Create live link", exact: true })
+    .click();
+  await expect(
+    page.getByRole("complementary", { name: "Edit link" }),
   ).toBeVisible();
-  await expect(page.getByLabel("Label", { exact: true })).toBeVisible();
-  await expect(page.getByLabel("Custom address")).toBeVisible();
-  await expect(page.getByLabel("Expires", { exact: true })).toBeVisible();
-  await page.getByLabel("Destination URL").fill("https://example.org/first");
-  await page.getByRole("button", { name: "Create link", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Edit link" })).toBeVisible();
   await expect(page).toHaveURL(/item=[a-f0-9-]{36}/);
   const id = new URL(page.url()).searchParams.get("item")!;
   const original = await json<Resource>(`/api/admin/links/${id}`, "GET");
   expect(original.slug).toMatch(/^[23456789abcdefghjkmnpqrstuvwxyz]{4}$/);
   expect(original.title).toBe("example.org");
-  await expect(
-    page.getByRole("button", { name: /^(Enable|Disable)$/ }),
-  ).toHaveCount(0);
-  await expect(
-    page.getByRole("combobox", { name: "Filter links" }),
-  ).toHaveCount(0);
-  await expect(
-    page.getByRole("columnheader", { name: "State", exact: true }),
-  ).toHaveCount(0);
-  expect(
-    (
-      await request.patch(`/api/admin/links/${id}/state`, {
-        headers,
-        data: { state: "disabled", expectedRevision: original.revision },
-      })
-    ).status(),
-  ).toBe(404);
   expect(
     (await request.get(original.url, { maxRedirects: 0 })).headers().location,
   ).toBe("https://example.org/first");
-  await page.getByLabel("Destination URL").fill("invalid unsaved destination");
-  await page.getByRole("button", { name: "Delete", exact: true }).click();
-  await expect(page.getByRole("alertdialog")).toContainText("Reusing it");
-  const deletion = page.waitForResponse(
-    (response) =>
-      response.url().endsWith(`/api/admin/links/${id}`) &&
-      response.request().method() === "DELETE",
+  await page
+    .getByRole("textbox", { name: "Destination URL", exact: true })
+    .fill("invalid unsaved destination");
+  await page
+    .getByRole("button", { name: "Move to Trash", exact: true })
+    .click();
+  await expect(page.getByRole("alertdialog")).toContainText(
+    "address stays reserved",
   );
-  await page.getByRole("button", { name: "Delete item", exact: true }).click();
-  expect((await deletion).status()).toBe(204);
+  await page
+    .getByRole("alertdialog")
+    .getByRole("button", { name: "Move to Trash", exact: true })
+    .click();
+  await expect(page).toHaveURL(`${origin}/admin/links`);
   expect((await request.get(original.url, { maxRedirects: 0 })).status()).toBe(
     404,
   );
-  await page.goto("/admin/links?item=new");
+  const replacement = await request.post("/api/admin/links", {
+    headers: { ...headers, "Idempotency-Key": crypto.randomUUID() },
+    data: {
+      title: "Replacement",
+      slug: original.slug,
+      destinationUrl: "https://example.net/replacement",
+      state: "active",
+      expiresAt: null,
+    },
+  });
+  expect(replacement.status()).toBe(409);
+  await page.goto(`/admin/trash?q=${original.slug}`);
   await page
-    .getByLabel("Destination URL")
-    .fill("https://example.net/replacement");
-  await page.getByLabel("Custom address").fill(original.slug);
-  await page.getByRole("button", { name: "Create link", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Edit link" })).toBeVisible();
-  await expect(page).toHaveURL(/item=[a-f0-9-]{36}/);
-  const newId = new URL(page.url()).searchParams.get("item")!;
-  expect(newId).not.toBe(id);
+    .getByRole("button", { name: "Restore example.org", exact: true })
+    .click();
+  await expect(
+    page.getByRole("link", { name: "Review example.org" }),
+  ).toBeVisible();
+  const restored = await json<Resource>(`/api/admin/links/${id}`, "GET");
+  expect(restored.state).toBe("disabled");
+  expect((await request.get(original.url, { maxRedirects: 0 })).status()).toBe(
+    404,
+  );
+  await page.getByRole("link", { name: "Review example.org" }).click();
+  await page.getByRole("button", { name: "Resume link", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Pause sharing", exact: true }),
+  ).toBeVisible();
   expect(
     (await request.get(original.url, { maxRedirects: 0 })).headers().location,
-  ).toBe("https://example.net/replacement");
-  expect((await request.get(`/api/admin/links/${id}`)).status()).toBe(404);
-  expect(
-    (
-      await request.delete(`/api/admin/links/${newId}`, {
-        headers,
-        data: { expectedRevision: 1 },
-      })
-    ).status(),
-  ).toBe(204);
+  ).toBe("https://example.org/first");
+  await page
+    .getByRole("button", { name: "Move to Trash", exact: true })
+    .click();
+  await page
+    .getByRole("alertdialog")
+    .getByRole("button", { name: "Move to Trash", exact: true })
+    .click();
+  await expect(page).toHaveURL(`${origin}/admin/links`);
+  await page.goto(`/admin/trash?q=${original.slug}`);
+  await page
+    .getByRole("button", {
+      name: "Delete example.org permanently",
+      exact: true,
+    })
+    .click();
+  await page
+    .getByRole("alertdialog")
+    .getByRole("button", { name: "Delete permanently", exact: true })
+    .click();
+  await expect(
+    page.getByRole("heading", { name: "No matching items" }),
+  ).toBeVisible();
+  expect((await request.get(original.url, { maxRedirects: 0 })).status()).toBe(
+    404,
+  );
 });
 test("creates and edits a link, protects unsaved edits, and exports decodable QR", async () => {
   await page.goto("/admin/links?item=new");
   await page
-    .getByLabel("Destination URL")
+    .getByText("Label, address and expiry", { exact: true })
+    .filter({ visible: true })
+    .click();
+  await page
+    .getByRole("textbox", { name: "Destination URL", exact: true })
     .fill("https://example.org/start?stored=1");
-  await page.getByLabel("Label", { exact: true }).fill("Design notes");
-  await page.getByLabel("Custom address").fill(slug);
-  await page.getByRole("button", { name: "Create link", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Edit link" })).toBeVisible();
+  await page
+    .getByRole("textbox", { name: "Label", exact: true })
+    .fill("Design notes");
+  await page
+    .getByRole("textbox", { name: "Custom address", exact: true })
+    .fill(slug);
+  await page
+    .getByRole("button", { name: "Create live link", exact: true })
+    .click();
+  await expect(
+    page.getByRole("complementary", { name: "Edit link" }),
+  ).toBeVisible();
   await expect(page).toHaveURL(/item=[a-f0-9-]{36}/);
   const slash = await request.get(`/${slug}/`, { maxRedirects: 0 });
   expect(slash.status()).toBe(307);
@@ -229,21 +289,26 @@ test("creates and edits a link, protects unsaved edits, and exports decodable QR
     "https://example.org/start?stored=1",
   );
   expect(redirect.headers()["cache-control"]).toBe("no-store");
-  await page.getByLabel("Label", { exact: true }).fill("Unsaved title");
-  await page.getByRole("button", { name: "Close editor" }).click();
+  await page
+    .getByRole("textbox", { name: "Label", exact: true })
+    .fill("Unsaved title");
+  await page
+    .getByRole("button", { name: /^(Close editor|Back to links)$/ })
+    .click();
   await expect(page.getByRole("alertdialog")).toBeVisible();
   await page.getByRole("button", { name: "Keep editing" }).click();
-  await expect(page.getByLabel("Label", { exact: true })).toHaveValue(
-    "Unsaved title",
-  );
+  await expect(
+    page.getByRole("textbox", { name: "Label", exact: true }),
+  ).toHaveValue("Unsaved title");
   await page.getByRole("button", { name: "Save changes", exact: true }).click();
-  await expect(page.getByLabel("Label", { exact: true })).toHaveValue(
-    "Unsaved title",
-  );
+  await expect(
+    page.getByRole("textbox", { name: "Label", exact: true }),
+  ).toHaveValue("Unsaved title");
   await expect(
     page.getByRole("complementary", { name: "Edit link" }),
   ).toHaveAttribute("data-revision", "2");
   await page.getByRole("button", { name: "Share", exact: true }).click();
+  await page.getByRole("dialog").getByText("QR code", { exact: true }).click();
   const qr = page.getByRole("img", { name: `QR code for ${origin}/${slug}` });
   await expect(qr).toBeVisible();
   const src = await qr.getAttribute("src");
@@ -262,30 +327,37 @@ test("creates and edits a link, protects unsaved edits, and exports decodable QR
   await expect(
     page.getByRole("button", { name: "Share", exact: true }),
   ).toBeFocused();
-  await page.getByLabel("Destination URL").fill("https://example.net/edited");
+  await page
+    .getByRole("textbox", { name: "Destination URL", exact: true })
+    .fill("https://example.net/edited");
   await page.getByRole("button", { name: "Save changes", exact: true }).click();
   await expect(page.locator(".editor-status:visible")).toHaveText("Saved");
   expect(
     (await request.get(`/${slug}`, { maxRedirects: 0 })).headers().location,
   ).toBe("https://example.net/edited");
   const renamedSlug = `${slug}-renamed`;
-  await page.getByLabel("Custom address").fill(renamedSlug);
+  await page
+    .getByRole("textbox", { name: "Custom address", exact: true })
+    .fill(renamedSlug);
   await expect(
-    page.getByText("Changing the address stops the old link and QR code."),
+    page.getByText(
+      "Existing links and QR codes will reach the same destination.",
+    ),
   ).toBeVisible();
   await page.getByRole("button", { name: "Save changes", exact: true }).click();
   await expect(page.locator(".editor-status:visible")).toHaveText("Saved");
   await expect(page.locator(".address-plate:visible")).toContainText(
     `${origin}/${renamedSlug}`,
   );
-  expect((await request.get(`/${slug}`, { maxRedirects: 0 })).status()).toBe(
-    404,
-  );
+  expect(
+    (await request.get(`/${slug}`, { maxRedirects: 0 })).headers().location,
+  ).toBe("https://example.net/edited");
   expect(
     (await request.get(`/${renamedSlug}`, { maxRedirects: 0 })).headers()
       .location,
   ).toBe("https://example.net/edited");
   await page.getByRole("button", { name: "Share", exact: true }).click();
+  await page.getByRole("dialog").getByText("QR code", { exact: true }).click();
   const renamedQr = page.getByRole("img", {
     name: `QR code for ${origin}/${renamedSlug}`,
   });
@@ -304,7 +376,7 @@ test("creates and edits a link, protects unsaved edits, and exports decodable QR
     )?.data,
   ).toBe(`${origin}/${renamedSlug}`);
   await expect(
-    page.getByRole("link", { name: "Open address", exact: true }),
+    page.getByRole("link", { name: "Open link", exact: true }),
   ).toHaveAttribute("href", `${origin}/${renamedSlug}`);
   await page.keyboard.press("Escape");
   const itemId = new URL(page.url()).searchParams.get("item")!;
@@ -317,23 +389,52 @@ test("creates and edits a link, protects unsaved edits, and exports decodable QR
     expectedRevision: item.revision,
   };
   await json(`/api/admin/links/${itemId}`, "PATCH", payload);
-  await page.getByLabel("Label", { exact: true }).fill("Keep my work");
+  await page
+    .getByRole("textbox", { name: "Label", exact: true })
+    .fill("Keep my work");
   await page.getByRole("button", { name: "Save changes", exact: true }).click();
   await expect(
-    page.getByText("Changed in another tab. Reload before saving."),
+    page.getByText(
+      "Changed in another tab. Review the latest version before continuing.",
+    ),
   ).toBeVisible();
-  await expect(page.getByLabel("Label", { exact: true })).toHaveValue(
-    "Keep my work",
-  );
-  page.once("dialog", (dialog) => dialog.accept());
-  await page.reload();
+  await expect(
+    page.getByRole("textbox", { name: "Label", exact: true }),
+  ).toHaveValue("Keep my work");
+  const draftDownload = page.waitForEvent("download");
+  await page
+    .getByRole("button", { name: "Download draft", exact: true })
+    .click();
+  expect(
+    await readFile((await (await draftDownload).path())!, "utf8"),
+  ).toContain("Keep my work");
+  await page
+    .getByRole("button", { name: "Review latest", exact: true })
+    .click();
+  await expect(
+    page.getByRole("dialog").getByLabel("Latest saved version"),
+  ).toContainText("Changed elsewhere");
+  await page
+    .getByRole("button", {
+      name: "Discard my edits and use saved version",
+      exact: true,
+    })
+    .click();
+  await expect(
+    page.getByRole("textbox", { name: "Label", exact: true }),
+  ).toHaveValue("Changed elsewhere");
   const deletion = page.waitForResponse(
     (response) =>
       response.url().endsWith(`/api/admin/links/${itemId}`) &&
       response.request().method() === "DELETE",
   );
-  await page.getByRole("button", { name: "Delete", exact: true }).click();
-  await page.getByRole("button", { name: "Delete item", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Move to Trash", exact: true })
+    .click();
+  await page
+    .getByRole("alertdialog")
+    .getByRole("button", { name: "Move to Trash", exact: true })
+    .click();
   expect((await deletion).status()).toBe(204);
   await expect(page).toHaveURL(/\/admin\/links$/);
   expect(
@@ -344,9 +445,17 @@ test("renders sanitized Markdown and exact raw text with draft and expiry gates"
   const body =
     "# A useful note\n\nHello 🫖\r\n\n<script>window.__pwned=true</script>\n\n![remote](https://tracker.example/pixel.png)\n\n[bad](javascript:alert(1))\n\n| A | B |\n| - | - |\n| one | two |";
   await page.goto("/admin/pastes?item=new");
-  await page.getByLabel("Title", { exact: true }).fill("Unicode notes");
-  await page.getByLabel("Content", { exact: true }).fill(body);
-  await page.getByLabel("Custom address").fill(`${slug}-paste`);
+  await page
+    .getByRole("textbox", { name: /^Title(?: \(optional\))?$/ })
+    .fill("Unicode notes");
+  await page.getByRole("textbox", { name: "Content", exact: true }).fill(body);
+  await page
+    .getByText("Sharing options", { exact: true })
+    .filter({ visible: true })
+    .click();
+  await page
+    .getByRole("textbox", { name: "Custom address", exact: true })
+    .fill(`${slug}-paste`);
   await page.getByRole("button", { name: "Save draft", exact: true }).click();
   await expect(page).toHaveURL(/item=[a-f0-9-]{36}/);
   expect((await request.get(`/p/${slug}-paste/raw`)).status()).toBe(404);
@@ -354,7 +463,7 @@ test("renders sanitized Markdown and exact raw text with draft and expiry gates"
     .getByRole("button", { name: "Publish paste", exact: true })
     .click();
   await expect(
-    page.getByRole("button", { name: "Disable", exact: true }),
+    page.getByRole("button", { name: "Pause sharing", exact: true }),
   ).toBeVisible();
   const id = new URL(page.url()).searchParams.get("item")!;
   const saved = await json<Resource & { format: string; language: string }>(
@@ -404,14 +513,14 @@ test("renders sanitized Markdown and exact raw text with draft and expiry gates"
   expect((await request.get(`/p/${slug}-paste`)).status()).toBe(404);
   await publicPage.close();
   await page.goto("/admin/pastes?item=new");
-  await page.getByLabel("Format").click();
+  await page.getByRole("combobox", { name: "Format", exact: true }).click();
   await page.getByRole("option", { name: "Code", exact: true }).click();
   await expect(page.locator(".cm-editor")).toBeVisible();
   await page.locator(".cm-content").fill('const message = "hello";');
   await page.getByRole("tab", { name: "Preview", exact: true }).click();
   await expect(
-    page.getByText('const message = "hello";', { exact: true }),
-  ).toBeVisible();
+    page.getByRole("tabpanel", { name: "Preview", exact: true }),
+  ).toContainText('const message = "hello";');
   page.once("dialog", (d) => d.accept());
   await page.goto("/admin/files");
 });
@@ -431,22 +540,42 @@ test("uploads through the Worker, publishes, downloads, ranges, and revokes", as
     mimeType: "text/plain",
     buffer: bytes,
   });
-  await expect(page.getByText("complete", { exact: true })).toBeVisible({
+  await expect(
+    page.getByText("Uploaded · Only you", { exact: true }),
+  ).toBeVisible({
     timeout: 60000,
   });
   await page
-    .getByRole("button", { name: new RegExp(filename.replaceAll(".", "\\.")) })
+    .getByRole("button", { name: "Review and publish", exact: true })
     .click();
   await expect(
-    page.getByRole("heading", { name: "File details" }),
+    page.getByRole("complementary", { name: "File details" }),
   ).toBeVisible();
   const id = new URL(page.url()).searchParams.get("item")!;
   const file = await json<Resource>(`/api/admin/files/${id}`, "GET");
   expect((await request.get(`${file.url}/download`)).status()).toBe(404);
-  await page.getByRole("button", { name: "Publish file", exact: true }).click();
+  await page
+    .getByRole("textbox", { name: /^Title(?: \(optional\))?$/ })
+    .fill("Published file title");
+  await page.getByRole("button", { name: "1 day", exact: true }).click();
+  const chosenExpiry = await page
+    .getByLabel("Expires", { exact: true })
+    .inputValue();
+  await page
+    .getByRole("button", { name: "Save and publish", exact: true })
+    .click();
   await expect(
-    page.getByRole("button", { name: "Disable", exact: true }),
+    page.getByRole("button", { name: "Pause sharing", exact: true }),
   ).toBeVisible();
+  const publishedFile = await json<Resource & { expiresAt: string }>(
+    `/api/admin/files/${id}`,
+    "GET",
+  );
+  expect(publishedFile.title).toBe("Published file title");
+  expect(publishedFile.expiresAt.slice(0, 16)).toBe(chosenExpiry);
+  expect(publishedFile.slug).toMatch(/^[23456789abcdefghjkmnpqrstuvwxyz]{12}$/);
+  const recipient = await request.get(file.url);
+  expect(await recipient.text()).toContain("Published file title");
   const download = await request.get(`${file.url}/download`);
   expect(download.status()).toBe(200);
   expect(
@@ -463,26 +592,35 @@ test("uploads through the Worker, publishes, downloads, ranges, and revokes", as
   expect(
     (await request.head(`${file.url}/download`)).headers()["content-length"],
   ).toBe(String(bytes.length));
-  await page.getByLabel("Title", { exact: true }).fill("Keep this file title");
+  await page
+    .getByRole("textbox", { name: /^Title(?: \(optional\))?$/ })
+    .fill("Keep this file title");
   const downloading = page.waitForEvent("download");
   await page.getByRole("link", { name: "Download", exact: true }).click();
   expect((await downloading).suggestedFilename()).toBe(filename);
   await expect(page.getByRole("alertdialog")).not.toBeVisible();
-  await expect(page.getByLabel("Title", { exact: true })).toHaveValue(
-    "Keep this file title",
-  );
-  await page.getByLabel("Title", { exact: true }).fill(file.title);
-  await page.getByRole("button", { name: "Delete", exact: true }).click();
+  await expect(
+    page.getByRole("textbox", { name: /^Title(?: \(optional\))?$/ }),
+  ).toHaveValue("Keep this file title");
+  await page
+    .getByRole("textbox", { name: /^Title(?: \(optional\))?$/ })
+    .fill(file.title);
+  await page
+    .getByRole("button", { name: "Move to Trash", exact: true })
+    .click();
   const deletion = page.waitForResponse(
     (response) =>
       response.url().endsWith(`/api/admin/files/${id}`) &&
       response.request().method() === "DELETE",
   );
-  await page.getByRole("button", { name: "Delete item", exact: true }).click();
+  await page
+    .getByRole("alertdialog")
+    .getByRole("button", { name: "Move to Trash", exact: true })
+    .click();
   expect((await deletion).status()).toBe(204);
   await expect(page).toHaveURL(`${origin}/admin/files`);
   await expect(
-    page.getByRole("heading", { name: "File details" }),
+    page.getByRole("complementary", { name: "File details" }),
   ).not.toBeVisible();
   for (const path of ["", "/download", "/preview"]) {
     const revoked = await request.get(`${file.url}${path}`, {
@@ -493,14 +631,22 @@ test("uploads through the Worker, publishes, downloads, ranges, and revokes", as
 });
 test("publishes scheduling and a card with avatar and valid contact download", async () => {
   await page.goto("/admin/scheduling");
-  await page.getByLabel("Provider", { exact: true }).fill("Booking");
-  await page.getByLabel("Booking URL").fill("https://example.org/booking");
-  const enabled = page.getByRole("switch", { name: "Enable scheduling" });
+  await page
+    .getByRole("textbox", { name: "Provider", exact: true })
+    .fill("Booking");
+  await page
+    .getByRole("textbox", { name: "Booking URL", exact: true })
+    .fill("https://example.org/booking");
+  const enabled = page.getByRole("switch", { name: "Share booking page" });
   if ((await enabled.getAttribute("aria-checked")) !== "true")
     await enabled.click();
-  await page.getByRole("button", { name: "Save changes", exact: true }).click();
+  const saveScheduling = page.getByRole("button", {
+    name: "Save changes",
+    exact: true,
+  });
+  if (await saveScheduling.isEnabled()) await saveScheduling.click();
   await expect(
-    page.getByRole("main").getByText("active", { exact: true }),
+    page.getByRole("main").getByText("Live", { exact: true }),
   ).toBeVisible();
   const meet = await request.get("/meet?unused=1", { maxRedirects: 0 });
   expect(meet.headers().location).toBe("https://example.org/booking");
@@ -509,13 +655,21 @@ test("publishes scheduling and a card with avatar and valid contact download", a
     avatarBlobId: string | null;
   }>("/api/admin/business-card", "GET");
   await page.goto("/admin/business-card");
-  await page.getByLabel("Display name").fill("Renée Example");
-  await page.getByLabel("Role", { exact: true }).fill("Designer & engineer");
   await page
-    .getByLabel("Introduction")
+    .getByRole("textbox", { name: "Display name", exact: true })
+    .fill("Renée Example");
+  await page
+    .getByRole("textbox", { name: "Role", exact: true })
+    .fill("Designer & engineer");
+  await page
+    .getByRole("textbox", { name: "Introduction", exact: true })
     .fill("Useful things, thoughtfully made.\nUnicode 🫖");
-  await page.getByLabel("Public email").fill("public@example.org");
-  await page.getByLabel("Website", { exact: true }).fill("https://example.org");
+  await page
+    .getByRole("textbox", { name: "Public email", exact: true })
+    .fill("public@example.org");
+  await page
+    .getByRole("textbox", { name: "Website", exact: true })
+    .fill("https://example.org");
   const choosingAvatar = page.waitForEvent("filechooser");
   await page.getByRole("button", { name: "Choose image", exact: true }).click();
   await (
@@ -525,7 +679,15 @@ test("publishes scheduling and a card with avatar and valid contact download", a
     mimeType: "image/png",
     buffer: png,
   });
-  await expect(page.getByText("complete", { exact: true })).toBeVisible();
+  await page
+    .getByRole("button", { name: "Use cropped image", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "Use cropped image", exact: true }),
+  ).not.toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Choose image", exact: true }),
+  ).toBeEnabled();
   const afterAvatar = await json<{
     revision: number;
     avatarBlobId: string | null;
@@ -545,7 +707,7 @@ test("publishes scheduling and a card with avatar and valid contact download", a
       .getByRole("button", { name: "Save changes", exact: true })
       .click();
   await expect(
-    page.getByRole("main").getByText("active", { exact: true }),
+    page.getByRole("main").getByText("Live", { exact: true }),
   ).toBeVisible();
   const contact = await context.newPage();
   await contact.goto("/contact");
@@ -565,7 +727,7 @@ test("publishes scheduling and a card with avatar and valid contact download", a
   expect(text).toContain(`URL:${origin}/contact\r\n`);
   await contact.close();
   await page
-    .getByRole("button", { name: "Unpublish card", exact: true })
+    .getByRole("button", { name: "Pause sharing", exact: true })
     .click();
   await expect(
     page.getByRole("button", { name: "Publish card", exact: true }),
@@ -574,15 +736,21 @@ test("publishes scheduling and a card with avatar and valid contact download", a
     expect((await request.get(path)).status()).toBe(404);
   await page.getByRole("button", { name: "Publish card", exact: true }).click();
   await expect(
-    page.getByRole("button", { name: "Unpublish card", exact: true }),
+    page.getByRole("button", { name: "Pause sharing", exact: true }),
   ).toBeVisible();
 });
 test("settings, export, responsive navigation and accessibility remain usable", async ({}, info) => {
   await page.goto("/admin/settings");
-  await page.getByLabel("Site name").fill("Emboss");
+  await page
+    .getByRole("textbox", { name: "Site name", exact: true })
+    .fill("Emboss");
   await page.getByLabel("Accent", { exact: true }).click();
   await page.getByRole("option", { name: "Instrument blue" }).click();
-  await page.getByRole("button", { name: "Save changes", exact: true }).click();
+  const saveSettings = page.getByRole("button", {
+    name: "Save changes",
+    exact: true,
+  });
+  if (await saveSettings.isEnabled()) await saveSettings.click();
   await expect(page.locator("html")).toHaveAttribute("data-accent", "blue");
   const exported = await request.get("/api/admin/export");
   const text = await exported.text();
@@ -596,6 +764,7 @@ test("settings, export, responsive navigation and accessibility remain usable", 
     "scheduling",
     "business-card",
     "settings",
+    "trash",
   ]) {
     await page.goto(`/admin/${path}`);
     expect(
@@ -610,7 +779,10 @@ test("settings, export, responsive navigation and accessibility remain usable", 
       audit.violations.map((v) => ({
         id: v.id,
         description: v.description,
-        nodes: v.nodes.map((n) => n.target),
+        nodes: v.nodes.map((n) => ({
+          target: n.target,
+          detail: n.failureSummary,
+        })),
       })),
     ).toEqual([]);
   }
@@ -669,6 +841,10 @@ test("narrow workspaces preserve readable controls, long content, and sharing fo
     }
     await page.goto(`/admin/links?item=${link.id}`);
     await page.getByRole("button", { name: "Share", exact: true }).click();
+    await page
+      .getByRole("dialog")
+      .getByText("QR code", { exact: true })
+      .click();
     const dialog = page.getByRole("dialog");
     await expect(dialog.getByRole("img", { name: /^QR code/ })).toBeVisible();
     const box = (await dialog.boundingBox())!;
@@ -683,23 +859,27 @@ test("narrow workspaces preserve readable controls, long content, and sharing fo
   await page.setViewportSize(originalViewport);
   await page.goto(`/admin/links?item=${link.id}`);
   await page
-    .getByLabel("Label", { exact: true })
+    .getByRole("textbox", { name: "Label", exact: true })
     .fill("Unsaved keyboard check");
   await page.getByRole("link", { name: "Skip to workspace" }).focus();
   await page.keyboard.press("Enter");
   await expect(page.getByRole("main")).toBeFocused();
   await expect(page.getByRole("alertdialog")).not.toBeVisible();
-  await page.getByLabel("Label", { exact: true }).fill(link.title);
+  await page
+    .getByRole("textbox", { name: "Label", exact: true })
+    .fill(link.title);
   await page.goto("/admin/links");
   await expect(page).toHaveTitle("Links · Emboss");
-  await page.getByLabel("Search links", { exact: true }).fill(`${slug}-layout`);
+  await page
+    .getByRole("textbox", { name: "Search links", exact: true })
+    .fill(`${slug}-layout`);
   await page.getByRole("button", { name: "Search", exact: true }).click();
   await expect(page).toHaveURL(new RegExp(`q=${slug}-layout`));
   await expect(
     page.getByRole("button", { name: new RegExp(`${slug}-layout`) }),
   ).toBeVisible();
   await page
-    .getByLabel("Search links", { exact: true })
+    .getByRole("textbox", { name: "Search links", exact: true })
     .fill(`${slug}-missing`);
   await page.getByRole("button", { name: "Search", exact: true }).click();
   await expect(page).toHaveURL(new RegExp(`q=${slug}-missing`));
@@ -743,37 +923,42 @@ test("Back and Forward keep drafts on cancel and preserve history on discard", a
   });
   await page.goto("/admin/links");
   await page.getByRole("button", { name: new RegExp(`/${a.slug}`) }).click();
-  await expect(page.getByLabel("Label", { exact: true })).toHaveValue(a.title);
+  await expect(
+    page.getByRole("textbox", { name: "Label", exact: true }),
+  ).toHaveValue(a.title);
+  await page
+    .getByRole("button", { name: /^(Close editor|Back to links)$/ })
+    .click();
   await page.getByRole("button", { name: new RegExp(`/${b.slug}`) }).click();
-  const label = page.getByLabel("Label", { exact: true });
+  const label = page.getByRole("textbox", { name: "Label", exact: true });
   await expect(label).toHaveValue(b.title);
   await label.fill("Keep backward draft");
-  await page.evaluate(() => history.back());
+  await page.evaluate(() => history.go(-2));
   await expect(page.getByRole("alertdialog")).toBeVisible();
   await expect(page).toHaveURL(new RegExp(`item=${b.id}`));
   await page.getByRole("button", { name: "Keep editing", exact: true }).click();
   await expect(label).toHaveValue("Keep backward draft");
-  await page.evaluate(() => history.back());
+  await page.evaluate(() => history.go(-2));
   await page
     .getByRole("button", { name: "Discard changes", exact: true })
     .click();
   await expect(page).toHaveURL(new RegExp(`item=${a.id}`));
   await expect(label).toHaveValue(a.title);
   await label.fill("Keep forward draft");
-  await page.evaluate(() => history.forward());
+  await page.evaluate(() => history.go(2));
   await expect(page.getByRole("alertdialog")).toBeVisible();
   await expect(page).toHaveURL(new RegExp(`item=${a.id}`));
   await page.getByRole("button", { name: "Keep editing", exact: true }).click();
   await expect(label).toHaveValue("Keep forward draft");
-  await page.evaluate(() => history.forward());
+  await page.evaluate(() => history.go(2));
   await page
     .getByRole("button", { name: "Discard changes", exact: true })
     .click();
   await expect(page).toHaveURL(new RegExp(`item=${b.id}`));
   await expect(label).toHaveValue(b.title);
-  await page.evaluate(() => history.back());
+  await page.evaluate(() => history.go(-2));
   await expect(label).toHaveValue(a.title);
-  await page.evaluate(() => history.forward());
+  await page.evaluate(() => history.go(2));
   await expect(label).toHaveValue(b.title);
 });
 
@@ -850,7 +1035,7 @@ test("every editor retains typing during a delayed save and saves it with the ne
     {
       route: `pastes?item=${paste.id}`,
       api: `/api/admin/pastes/${paste.id}`,
-      field: "Title",
+      field: "Title (optional)",
       key: "title",
     },
     {
@@ -879,9 +1064,7 @@ test("every editor retains typing during a delayed save and saves it with the ne
     },
   ]) {
     await page.goto(`/admin/${item.route}`);
-    const input = page.getByLabel(item.field, {
-      exact: item.field !== "Display name",
-    });
+    const input = page.getByRole("textbox", { name: item.field, exact: true });
     await input.fill("First saved value");
     const save = page.getByRole("button", {
       name: "Save changes",
@@ -909,23 +1092,31 @@ test("every editor retains typing during a delayed save and saves it with the ne
 test("creation keeps later typing across the first saved URL and New starts clean", async () => {
   for (const kind of ["links", "pastes"]) {
     await page.goto(`/admin/${kind}?item=new`);
-    const field = page.getByLabel(kind === "links" ? "Label" : "Title", {
+    if (kind === "links")
+      await page
+        .getByText("Label, address and expiry", { exact: true })
+        .filter({ visible: true })
+        .click();
+    const field = page.getByRole("textbox", {
+      name: kind === "links" ? "Label" : "Title (optional)",
       exact: true,
     });
     await field.fill("First created value");
     if (kind === "links")
       await page
-        .getByLabel("Destination URL")
+        .getByRole("textbox", { name: "Destination URL", exact: true })
         .fill("https://example.org/create");
     else
-      await page.getByLabel("Content", { exact: true }).fill("Created content");
+      await page
+        .getByRole("textbox", { name: "Content", exact: true })
+        .fill("Created content");
     await delaySave(
       `/api/admin/${kind}`,
       "POST",
       () =>
         page
           .getByRole("button", {
-            name: kind === "links" ? "Create link" : "Save draft",
+            name: kind === "links" ? "Create live link" : "Save draft",
             exact: true,
           })
           .click(),
@@ -946,15 +1137,50 @@ test("creation keeps later typing across the first saved URL and New starts clea
     ).toBe("Newer creation draft");
     await page
       .getByRole("button", {
+        name: /^(Close editor|Back to links|Back to pastes)$/,
+      })
+      .click();
+    await page
+      .getByRole("button", {
         name: kind === "links" ? "New link" : "New paste",
         exact: true,
       })
       .first()
       .click();
+    if (kind === "links")
+      await page
+        .getByText("Label, address and expiry", { exact: true })
+        .filter({ visible: true })
+        .click();
     await expect(field).toHaveValue("");
     await expect(page.locator(".editor-status:visible")).toHaveText(
       "Not saved",
     );
+    const newAgain = page.getByRole("button", {
+      name: kind === "links" ? "New link" : "New paste",
+      exact: true,
+    });
+    if (await newAgain.isVisible()) {
+      await field.fill("Keep this new draft");
+      await newAgain.click();
+      await expect(page.getByRole("alertdialog")).toContainText(
+        "Discard unsaved changes?",
+      );
+      await page
+        .getByRole("button", { name: "Keep editing", exact: true })
+        .click();
+      await expect(field).toHaveValue("Keep this new draft");
+      await newAgain.click();
+      await page
+        .getByRole("button", { name: "Discard changes", exact: true })
+        .click();
+      if (kind === "links")
+        await page
+          .getByText("Label, address and expiry", { exact: true })
+          .filter({ visible: true })
+          .click();
+      await expect(field).toHaveValue("");
+    }
   }
 });
 
@@ -968,21 +1194,27 @@ test("revoking published content ignores invalid drafts and preserves them", asy
     expiresAt: null,
   });
   await page.goto(`/admin/pastes?item=${paste.id}`);
-  await page.getByLabel("Content", { exact: true }).fill("");
-  await page.getByRole("button", { name: "Disable", exact: true }).click();
+  await page.getByRole("textbox", { name: "Content", exact: true }).fill("");
+  await page
+    .getByRole("button", { name: "Pause sharing", exact: true })
+    .click();
   await expect(
     page.getByRole("button", { name: "Publish paste", exact: true }),
   ).toBeVisible();
-  await expect(page.getByLabel("Content", { exact: true })).toHaveValue("");
+  await expect(
+    page.getByRole("textbox", { name: "Content", exact: true }),
+  ).toHaveValue("");
   expect(
     (await request.get(paste.url + "/raw", { maxRedirects: 0 })).status(),
   ).toBe(404);
   expect(
     (await json<Resource>(`/api/admin/pastes/${paste.id}`, "GET")).body,
   ).toBe("Saved content");
-  await page.getByLabel("Content", { exact: true }).fill("Saved content");
+  await page
+    .getByRole("textbox", { name: "Content", exact: true })
+    .fill("Saved content");
   await page.goto("/admin/business-card");
-  const name = page.getByLabel("Display name");
+  const name = page.getByRole("textbox", { name: "Display name", exact: true });
   await name.fill("Saved public identity");
   const publish = page.getByRole("button", {
     name: "Publish card",
@@ -996,7 +1228,7 @@ test("revoking published content ignores invalid drafts and preserves them", asy
   await expect(page.locator(".editor-status:visible")).toHaveText("Saved");
   await name.fill("");
   await page
-    .getByRole("button", { name: "Unpublish card", exact: true })
+    .getByRole("button", { name: "Pause sharing", exact: true })
     .click();
   await expect(publish).toBeVisible();
   await expect(name).toHaveValue("");
@@ -1012,24 +1244,279 @@ test("revoking published content ignores invalid drafts and preserves them", asy
   await name.fill("Saved public identity");
 });
 
+test("preserves filtered pages and returns focus after saving and closing", async () => {
+  for (let index = 0; index < 3; index++) {
+    await json<Resource>("/api/admin/links", "POST", {
+      title: `${slug} collection ${index}`,
+      destinationUrl: "https://example.org/collection",
+      state: "active",
+      expiresAt: null,
+    });
+  }
+  await page.goto(`/admin/links?q=${slug}&state=active&limit=2`);
+  await page.getByRole("button", { name: "Next", exact: true }).click();
+  await expect(page).toHaveURL(/cursor=/);
+  const collection = new URL(page.url());
+  const row = page.locator("[data-resource-id]").filter({ visible: true });
+  await expect(row).toHaveCount(1);
+  const id = await row.getAttribute("data-resource-id");
+  await row.click();
+  await page
+    .getByRole("button", { name: /^(Close editor|Back to links)$/ })
+    .click();
+  await expect(
+    page.locator(`[data-resource-id="${id}"]`).filter({ visible: true }),
+  ).toBeFocused();
+  await row.click();
+  await page
+    .getByRole("textbox", { name: "Label", exact: true })
+    .fill(`${slug} revised collection`);
+  await page.getByRole("button", { name: "Save changes", exact: true }).click();
+  await expect(page.locator(".editor-status:visible")).toHaveText("Saved");
+  for (const name of ["q", "state", "cursor", "limit"]) {
+    expect(new URL(page.url()).searchParams.get(name)).toBe(
+      collection.searchParams.get(name),
+    );
+  }
+  await page
+    .getByRole("button", { name: /^(Close editor|Back to links)$/ })
+    .click();
+  await expect(
+    page.getByRole("textbox", { name: "Search links", exact: true }),
+  ).toBeFocused();
+  await page.getByRole("button", { name: "Previous", exact: true }).click();
+  await expect(page).not.toHaveURL(/cursor=/);
+  await expect(
+    page.locator("[data-resource-id]").filter({ visible: true }),
+  ).toHaveCount(2);
+  await page
+    .getByRole("textbox", { name: "Search links", exact: true })
+    .fill("all");
+  await page.getByRole("button", { name: "Search", exact: true }).click();
+  await expect(page).toHaveURL(/q=all/);
+});
+
+test("changing paste format and preview preserves exact stored line endings", async () => {
+  const body = "const first = 1;\r\nconst second = 2;\r\n";
+  const paste = await json<Resource>("/api/admin/pastes", "POST", {
+    title: "Exact code",
+    body,
+    format: "text",
+    language: "text",
+    state: "draft",
+    expiresAt: null,
+  });
+  await page.goto(`/admin/pastes?item=${paste.id}`);
+  await expect(
+    page.getByRole("combobox", { name: "Language", exact: true }),
+  ).not.toBeVisible();
+  await page.getByRole("combobox", { name: "Format", exact: true }).click();
+  await page.getByRole("option", { name: "Code", exact: true }).click();
+  await expect(page.locator(".cm-editor")).toBeVisible();
+  await page.getByRole("combobox", { name: "Language", exact: true }).click();
+  await page.getByRole("option", { name: "JavaScript", exact: true }).click();
+  await page.getByRole("tab", { name: "Preview", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Wrap lines", exact: true }),
+  ).toBeVisible();
+  await page.getByRole("tab", { name: "Edit", exact: true }).click();
+  await page.getByRole("button", { name: "Save changes", exact: true }).click();
+  await expect(page.locator(".editor-status:visible")).toHaveText("Saved");
+  expect(
+    (await json<Resource>(`/api/admin/pastes/${paste.id}`, "GET")).body,
+  ).toBe(body);
+  await page
+    .getByRole("button", { name: "Publish paste", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "Pause sharing", exact: true }),
+  ).toBeVisible();
+  expect(await (await request.get(`${paste.url}/raw`)).text()).toBe(body);
+  const recipient = await context.newPage();
+  await recipient.goto(paste.url);
+  await expect(recipient).toHaveTitle(/Exact code/);
+  await recipient
+    .getByRole("button", { name: "Line numbers", exact: true })
+    .click();
+  await expect(recipient.locator(".cm-lineNumbers")).toBeVisible();
+  await recipient.close();
+});
+
+test("failed and cancelled uploads can be retried without duplicate active transfers", async () => {
+  await page.goto("/admin/files");
+  let failed = false;
+  const uploads = `${origin}/api/admin/uploads/*`;
+  await page.route(uploads, async (route) => {
+    if (route.request().method() === "PUT" && !failed) {
+      failed = true;
+      await route.abort("failed");
+    } else await route.continue();
+  });
+  await page.getByLabel("Files to upload").setInputFiles({
+    name: `${slug}-retry.txt`,
+    mimeType: "text/plain",
+    buffer: Buffer.from("Retry me"),
+  });
+  await expect(
+    page.getByRole("button", { name: "Retry", exact: true }),
+  ).toBeEnabled();
+  await page.getByRole("button", { name: "Retry", exact: true }).click();
+  await expect(
+    page.getByText("Uploaded · Only you", { exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: `Dismiss ${slug}-retry.txt`, exact: true })
+    .click();
+  await page.unroute(uploads);
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route(uploads, async (route) => {
+    if (route.request().method() === "PUT") await held;
+    await route.continue().catch(() => {});
+  });
+  await page.getByLabel("Files to upload").setInputFiles({
+    name: `${slug}-cancel.txt`,
+    mimeType: "text/plain",
+    buffer: Buffer.from("Cancel me"),
+  });
+  await expect(
+    page.locator('.upload-job[data-state="uploading"]'),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: new RegExp(`${slug}-retry\\.txt`) })
+    .click();
+  await expect(
+    page.getByRole("complementary", { name: "File details" }),
+  ).toBeVisible();
+  await expect(page.getByRole("alertdialog")).not.toBeVisible();
+  await page
+    .getByRole("textbox", { name: "Title", exact: true })
+    .fill("Unsaved upload navigation");
+  await page
+    .getByRole("button", { name: /^(Close editor|Back to files)$/ })
+    .click();
+  await expect(page.getByRole("alertdialog")).toContainText(
+    "Discard unsaved changes?",
+  );
+  await page
+    .getByRole("button", { name: "Discard changes", exact: true })
+    .click();
+  await expect(page).toHaveURL(`${origin}/admin/files`);
+  await expect(page.getByRole("alertdialog")).not.toBeVisible();
+  const menu = page.getByRole("button", {
+    name: "Open navigation",
+    exact: true,
+  });
+  if (await menu.isVisible()) await menu.click();
+  await page.getByRole("link", { name: "Settings", exact: true }).click();
+  await expect(page.getByRole("alertdialog")).toContainText(
+    "Leave while uploading?",
+  );
+  await page.getByRole("button", { name: "Stay here", exact: true }).click();
+  await expect(page.getByRole("alertdialog")).not.toBeVisible();
+  const closeMenu = page.getByRole("button", {
+    name: "Close navigation",
+    exact: true,
+  });
+  if (await closeMenu.isVisible()) await closeMenu.click();
+  await page
+    .getByRole("button", { name: `Cancel ${slug}-cancel.txt`, exact: true })
+    .click();
+  release();
+  await expect(
+    page.getByRole("button", { name: "Retry", exact: true }),
+  ).toBeEnabled();
+  await page.unroute(uploads);
+  await page.getByRole("button", { name: "Retry", exact: true }).click();
+  await expect(
+    page.getByText("Uploaded · Only you", { exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Review and publish", exact: true })
+    .click();
+  await expect(
+    page.getByRole("complementary", { name: "File details" }),
+  ).toBeVisible();
+  await expect(page.getByRole("alertdialog")).not.toBeVisible();
+});
+
+test("waits for JavaScript before accepting editor input", async () => {
+  const paste = await json<Resource>("/api/admin/pastes", "POST", {
+    title: "Slow connection",
+    body: "Saved content",
+    format: "text",
+    language: "text",
+    state: "active",
+    expiresAt: null,
+  });
+  let release!: () => void;
+  const loaded = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const scripts = /\/_next\/static\/.*\.js(?:\?.*)?$/;
+  await page.route(scripts, async (route) => {
+    await loaded;
+    await route.continue();
+  });
+  try {
+    await page.goto(`/admin/pastes?item=${paste.id}`, { waitUntil: "commit" });
+    const body = page.locator("textarea").filter({ visible: true });
+    await expect(body).toHaveValue("Saved content");
+    await expect(body).toBeDisabled();
+    await expect(body).not.toBeEditable();
+    release();
+    await expect(body).toBeEditable();
+    await body.fill("");
+    await page
+      .getByRole("button", { name: "Pause sharing", exact: true })
+      .click();
+    await expect(
+      page.getByRole("button", { name: "Publish paste", exact: true }),
+    ).toBeVisible();
+    await expect(body).toHaveValue("");
+    expect(
+      (await json<Resource>(`/api/admin/pastes/${paste.id}`, "GET")).body,
+    ).toBe("Saved content");
+  } finally {
+    release();
+    await page.unroute(scripts);
+  }
+});
+
 test("expired sessions preserve edits through reauthentication and sign-out revokes access", async ({}, info) => {
   await page.goto("/admin/links?item=new");
-  await page.getByLabel("Destination URL").fill("https://example.org/reauth");
-  await page.getByLabel("Label", { exact: true }).fill("Keep these edits");
+  await page
+    .getByText("Label, address and expiry", { exact: true })
+    .filter({ visible: true })
+    .click();
+  await page
+    .getByRole("textbox", { name: "Destination URL", exact: true })
+    .fill("https://example.org/reauth");
+  await page
+    .getByRole("textbox", { name: "Label", exact: true })
+    .fill("Keep these edits");
   const logout = await request.post("/api/auth/logout", { headers, data: {} });
   expect(logout.status()).toBe(204);
-  await page.getByRole("button", { name: "Create link", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Create live link", exact: true })
+    .click();
   await page
     .getByRole("button", { name: "Sign in again", exact: true })
     .click();
   await page.getByLabel("Admin password").fill(password);
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await expect(page.getByRole("dialog")).not.toBeVisible();
-  await expect(page.getByLabel("Label", { exact: true })).toHaveValue(
-    "Keep these edits",
-  );
-  await page.getByRole("button", { name: "Create link", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Edit link" })).toBeVisible();
+  await expect(
+    page.getByRole("textbox", { name: "Label", exact: true }),
+  ).toHaveValue("Keep these edits");
+  await page
+    .getByRole("button", { name: "Create live link", exact: true })
+    .click();
+  await expect(
+    page.getByRole("complementary", { name: "Edit link" }),
+  ).toBeVisible();
   await expect(page).toHaveURL(/item=[a-f0-9-]{36}/);
   if (info.project.name === "mobile")
     await page.getByRole("button", { name: "Open navigation" }).click();
