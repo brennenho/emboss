@@ -232,8 +232,8 @@ rehearsal resources and temporary backups when no longer needed.
 ## Local recovery rehearsal · September 30, 2026
 
 The actual `backup.ts` and `restore.ts` scripts completed against separate local
-D1 databases and R2 buckets using migrations `0000` through `0005` and the backup
-trigger-order fix in `cc29775`. Source and target configurations, fixture passwords,
+D1 databases and R2 buckets using migrations `0000` through `0005`, restoring
+table data before installing triggers. Source and target configurations, fixture passwords,
 and local persistence were isolated under a disposable `/tmp` directory. The
 source was in read-only mode during export; the target remained read-only until
 initial verification passed. The normal development database and secret file were

@@ -8,7 +8,7 @@ Built on Next.js App Router, Cloudflare Workers/OpenNext, D1/Drizzle, and privat
 R2. The interface uses customized official shadcn/Radix controls and bundled
 IBM Plex fonts. No registration, visitor analytics, or external auth service.
 
-![Emboss link workspace with the shared industrial theme and editor](docs/workspace.png)
+![Emboss link workspace and sharing editor](docs/workspace.png)
 
 ## Local development
 
@@ -51,21 +51,35 @@ password. Configure deployment environments separately; see [operations](docs/op
 
 Settings may lower the operator's file, paste, and storage ceilings. Publication
 is explicit for pastes, files, and the card. Published content is **unlisted,
-not access-controlled**: anyone with its URL can open it. Disable, expiry, and
-delete revoke future access immediately; downloaded copies cannot be revoked.
-Generated addresses use four random lowercase letters or numbers, excluding
-`0`, `1`, `i`, `l`, and `o`. Custom addresses are optional. Links are live on creation;
-delete them to deactivate them. Destinations, labels, addresses, and expiry are
-editable. Changing a destination keeps the short address working. Renaming or
-deleting a link releases its old address for reuse; old links and QR codes then
-lead to any replacement. Paste and file addresses stay fixed until deletion.
-Expiry alone does not release an address or delete file bytes. Previously disabled
-or draft links stay unavailable until explicitly saved or deleted.
+not access-controlled**: anyone with its URL can open it. Pausing, expiry, and
+moving an item to Trash revoke future access immediately; downloaded copies
+cannot be revoked. Generated links use four random characters; files and pastes
+use twelve. Custom addresses are optional. Links are live on creation and can
+be paused without losing their address. Destinations, labels, addresses, and
+expiry are editable. Changing a destination keeps the short address working.
+When renaming a link, keep the previous address as an alias or retire it.
+Retired and deleted addresses stay reserved permanently, including after content
+is purged, so old links and QR codes cannot point to an unrelated item.
 
-Editors show Saved, Saving, or Unsaved changes. Saving preserves newer typing;
-Delete, Disable (pastes/files), and Unpublish revoke access without saving unfinished
-edits. Changes from another tab trigger a revision conflict instead of overwriting
-saved work.
+Trash shows each item's recovery deadline. Restoring an item brings it back
+paused for review. Permanent deletion ends recovery immediately; file bytes are
+released when automatic cleanup finishes. Expiry alone never deletes content.
+Existing live owners retain historically reused addresses during migration;
+addresses discarded by earlier renames cannot be reconstructed.
+
+Editors show Saved, Saving, or Unsaved changes. Saving and publishing include
+the fields on screen while preserving typing entered during the request. Pause
+sharing and Move to Trash revoke access without saving unfinished edits.
+Revision conflicts preserve your draft and let you copy/download it, review the
+latest saved version, and explicitly choose whether to replace your edits.
+Search, filters, pagination, and return focus stay intact across editing.
+
+Copy links directly from live list rows or the editor. Share offers copying,
+the device share sheet when available, and downloadable QR codes. Public text
+file previews are bounded; Markdown is sanitized, and code pastes include
+syntax presentation, line numbers, and wrapping controls. Card portraits can be
+cropped before upload. Settings distinguishes metadata export from a full backup
+and reports observed cleanup health without inventing backup status.
 
 The root redirects to the configured personal website, otherwise to a published
 card, otherwise returns unavailable. Domains and public identity are configurable;

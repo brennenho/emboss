@@ -1,0 +1,32 @@
+{
+  "capturedAt": "2026-09-30T17:58:56.980Z",
+  "publicPasteTitle": "Emboss",
+  "filePublish": {
+    "enteredTitle": "Audit document with a one-hour expiry",
+    "enteredExpiry": "2026-09-30T18:58",
+    "storedTitle": "Audit welcome document",
+    "storedExpiry": null,
+    "state": "active",
+    "editorStatus": "Unsaved changes"
+  },
+  "publicCardTitle": "Emboss",
+  "urlAfterFilteredSave": "http://127.0.0.1:8787/admin/links?item=db2d7062-f8a0-43d1-9d78-0c6e06bd8e94",
+  "mobileLink": {
+    "height": 664,
+    "shareTop": 920.5,
+    "documentHeight": 1549
+  },
+  "mobilePaste": {
+    "x": 16,
+    "y": 683,
+    "width": 358,
+    "height": 292.15625
+  },
+  "mobileOverflow": false,
+  "mobileSelection": {
+    "focusTag": "BUTTON",
+    "focusText": "/audit-studioAudit studio portfolio revised · https://example.org/studio",
+    "scrollY": 0,
+    "editorTop": 125
+  }
+}
