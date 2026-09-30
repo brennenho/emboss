@@ -21,6 +21,7 @@ const stateLabels: Record<string, string> = {
   disabled: "Paused",
   expired: "Expired",
   ready: "Ready",
+  reserved: "Waiting to upload",
   uploading: "Uploading",
   finalizing: "Finishing",
   complete: "Uploaded",

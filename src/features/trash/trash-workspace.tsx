@@ -234,7 +234,7 @@ export function TrashWorkspace({
                               This removes its content and ends recovery now.
                               Its old address stays reserved.
                               {item.kind === "file"
-                                ? " File storage will be released by the next automatic cleanup."
+                                ? " File storage is released when automatic cleanup finishes."
                                 : ""}
                             </AlertDialogDescription>
                           </AlertDialogHeader>
