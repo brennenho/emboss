@@ -18,7 +18,7 @@ export function sharingDescription(state: string) {
   if (state === "expired")
     return "This link has expired. Change its expiry before sharing it again.";
   if (state === "disabled")
-    return "This link is paused. Publish it again before sharing it.";
+    return "This link is paused. Make it live again before sharing it.";
   return "Only you can open this until you publish it.";
 }
 
@@ -212,7 +212,7 @@ export function ShareDialog({
           Share
         </Button>
       </DialogTrigger>
-      <DialogContent className="share-dialog sm:max-w-[460px]">
+      <DialogContent className="share-dialog p-6 sm:max-w-[460px]">
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>{sharingDescription(state)}</DialogDescription>

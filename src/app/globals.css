@@ -846,10 +846,6 @@
   .expiry-presets [aria-pressed="true"] {
     background: var(--secondary);
   }
-  .share-dialog {
-    max-width: min(460px, calc(100% - 32px));
-    padding: 24px;
-  }
   .share-dialog .form-actions {
     padding-top: 0;
   }
@@ -1066,6 +1062,12 @@
 @media (min-width: 1280px) {
   .paste-content-grid[data-view="split"] {
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+}
+@media (min-width: 901px) {
+  .inspector-back,
+  .card-view-switch {
+    display: none;
   }
 }
 @media (max-width: 900px) {
