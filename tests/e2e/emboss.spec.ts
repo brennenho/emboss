@@ -1352,11 +1352,13 @@ test("failed and cancelled uploads can be retried without duplicate active trans
       await route.abort("failed");
     } else await route.continue();
   });
-  await page.getByLabel("Files to upload").setInputFiles({
-    name: `${slug}-retry.txt`,
-    mimeType: "text/plain",
-    buffer: Buffer.from("Retry me"),
-  });
+  await page
+    .getByRole("button", { name: "Files to upload", exact: true })
+    .setInputFiles({
+      name: `${slug}-retry.txt`,
+      mimeType: "text/plain",
+      buffer: Buffer.from("Retry me"),
+    });
   await expect(
     page.getByRole("button", { name: "Retry", exact: true }),
   ).toBeEnabled();
@@ -1376,11 +1378,13 @@ test("failed and cancelled uploads can be retried without duplicate active trans
     if (route.request().method() === "PUT") await held;
     await route.continue().catch(() => {});
   });
-  await page.getByLabel("Files to upload").setInputFiles({
-    name: `${slug}-cancel.txt`,
-    mimeType: "text/plain",
-    buffer: Buffer.from("Cancel me"),
-  });
+  await page
+    .getByRole("button", { name: "Files to upload", exact: true })
+    .setInputFiles({
+      name: `${slug}-cancel.txt`,
+      mimeType: "text/plain",
+      buffer: Buffer.from("Cancel me"),
+    });
   await expect(
     page.locator('.upload-job[data-state="uploading"]'),
   ).toBeVisible();
