@@ -18,21 +18,45 @@ type Job = {
   id: string;
   file: File;
   key: string;
-  state: "queued" | "uploading" | "complete" | "failed" | "cancelled";
+  state:
+    "queued" | "uploading" | "checking" | "complete" | "failed" | "cancelled";
   progress: number;
   error: ApiError | null;
   result?: UploadResult;
   xhr?: XMLHttpRequest;
   cancelled: boolean;
+  running: boolean;
+  cancelling: boolean;
 };
+
+function uploadStatus(job: Job, avatar: boolean) {
+  switch (job.state) {
+    case "uploading":
+      return job.progress === 100 ? "Finishing…" : `${job.progress}%`;
+    case "complete":
+      return avatar ? "Uploaded" : "Uploaded · Only you";
+    case "queued":
+      return "Waiting";
+    case "checking":
+      return "Checking upload…";
+    case "failed":
+      return "Upload failed";
+    case "cancelled":
+      return "Cancelled";
+  }
+}
 export function UploadControl({
   maxBytes,
   avatar = false,
   onComplete,
+  onReview,
+  availableBytes,
 }: {
   maxBytes: number;
   avatar?: boolean;
   onComplete: (result: UploadResult) => void;
+  onReview?: (resource: ResourceDto) => void;
+  availableBytes?: number;
 }) {
   const input = useRef<HTMLInputElement>(null),
     jobs = useRef<Job[]>([]),
@@ -41,13 +65,19 @@ export function UploadControl({
     [drag, setDrag] = useState(false),
     [error, setError] = useState<ApiError | null>(null);
   useEditorGuard(
-    snapshot.some((j) => ["queued", "uploading"].includes(j.state)),
+    snapshot.some(
+      (job) =>
+        job.running ||
+        job.cancelling ||
+        ["queued", "checking"].includes(job.state),
+    ),
   );
   function render() {
-    setSnapshot(jobs.current.map((j) => ({ ...j })));
+    setSnapshot([...jobs.current]);
   }
   async function cancel(job: Job) {
     job.cancelled = true;
+    job.cancelling = true;
     job.xhr?.abort();
     job.state = "cancelled";
     render();
@@ -59,16 +89,24 @@ export function UploadControl({
         render();
       }
     }
+    job.cancelling = false;
+    render();
+  }
+  function dismiss(job: Job) {
+    jobs.current = jobs.current.filter((candidate) => candidate.id !== job.id);
+    render();
   }
   function pump() {
     while (active.current < 2) {
       const job = jobs.current.find((j) => j.state === "queued");
       if (!job) return;
       active.current++;
+      job.running = true;
       job.state = "uploading";
       render();
       void transfer(job).finally(() => {
         active.current--;
+        job.running = false;
         render();
         pump();
       });
@@ -166,7 +204,15 @@ export function UploadControl({
     }
   }
   async function retry(job: Job) {
+    if (
+      job.running ||
+      job.cancelling ||
+      !["failed", "cancelled"].includes(job.state)
+    )
+      return;
+    job.state = "checking";
     job.error = null;
+    render();
     try {
       if (job.result) {
         const previous = await api<UploadResult>(
@@ -194,6 +240,7 @@ export function UploadControl({
       render();
       pump();
     } catch (e) {
+      job.state = "failed";
       job.error = e as ApiError;
       render();
     }
@@ -220,6 +267,8 @@ export function UploadControl({
         progress: 0,
         error: null,
         cancelled: false,
+        running: false,
+        cancelling: false,
       });
       if (avatar) break;
     }
@@ -249,6 +298,9 @@ export function UploadControl({
             {avatar ? "PNG, JPEG, or WebP · " : ""}Up to {formatBytes(maxBytes)}
             {avatar ? "" : " per file"}
           </p>
+          {!avatar && availableBytes !== undefined && (
+            <p className="muted">{formatBytes(availableBytes)} available</p>
+          )}
         </div>
         <input
           ref={input}
@@ -276,53 +328,86 @@ export function UploadControl({
         error={error}
         onReauthenticated={() => setError(null)}
       />
-      {snapshot.map((job) => (
-        <div className="border-b pb-3" key={job.id}>
-          <div className="flex items-center justify-between gap-3">
-            <span className="min-w-0 text-sm break-all">{job.file.name}</span>
-            <span className="muted shrink-0" role="status">
-              {job.state === "uploading"
-                ? `${job.progress}%${job.progress === 100 ? " · finishing…" : ""}`
-                : job.state}
-            </span>
-            {["queued", "uploading"].includes(job.state) && (
-              <Button
-                type="button"
-                size="icon"
-                variant="ghost"
-                aria-label={`Cancel ${job.file.name}`}
-                onClick={() => void cancel(job)}
-              >
-                <X />
-              </Button>
-            )}
-            {["failed", "cancelled"].includes(job.state) && (
+      {snapshot.map((job) => {
+        const resource = job.result?.resource;
+        return (
+          <div
+            className="upload-job border-b pb-3"
+            data-state={job.state}
+            key={job.id}
+          >
+            <div className="upload-job-top flex flex-wrap items-center justify-between gap-3">
+              <div className="min-w-0 flex-1">
+                <p className="text-sm break-all">{job.file.name}</p>
+                <p className="muted">{formatBytes(job.file.size)}</p>
+              </div>
+              <span className="muted shrink-0" role="status">
+                {uploadStatus(job, avatar)}
+              </span>
+              {["queued", "uploading"].includes(job.state) && (
+                <Button
+                  type="button"
+                  size="icon"
+                  variant="ghost"
+                  aria-label={`Cancel ${job.file.name}`}
+                  onClick={() => void cancel(job)}
+                >
+                  <X />
+                </Button>
+              )}
+              {job.state === "complete" && (
+                <Button
+                  type="button"
+                  size="icon"
+                  variant="ghost"
+                  aria-label={`Dismiss ${job.file.name}`}
+                  onClick={() => dismiss(job)}
+                >
+                  <X />
+                </Button>
+              )}
+              {["failed", "cancelled"].includes(job.state) && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={job.running || job.cancelling}
+                  onClick={() => void retry(job)}
+                >
+                  <RotateCcw />
+                  Retry
+                </Button>
+              )}
+            </div>
+            {job.state === "complete" && resource && onReview && (
               <Button
                 type="button"
                 variant="outline"
-                onClick={() => void retry(job)}
+                className="upload-result-action mt-3"
+                onClick={() => {
+                  onReview(resource);
+                  dismiss(job);
+                }}
               >
-                <RotateCcw />
-                Retry
+                Review and publish
               </Button>
             )}
-          </div>
-          {job.state === "uploading" && (
-            <Progress
-              value={job.progress}
-              aria-label={`${job.file.name} upload progress`}
-              className="mt-2"
+            {job.state === "uploading" && (
+              <Progress
+                value={job.progress}
+                aria-label={`${job.file.name} upload progress`}
+                className="mt-2"
+              />
+            )}
+            <MutationFeedback
+              error={job.error}
+              onReauthenticated={() => {
+                job.error = null;
+                render();
+              }}
             />
-          )}
-          <MutationFeedback
-            error={job.error}
-            onReauthenticated={() => {
-              job.error = null;
-              render();
-            }}
-          />
-        </div>
-      ))}
+          </div>
+        );
+      })}
     </div>
   );
 }

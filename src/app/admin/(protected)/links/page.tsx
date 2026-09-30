@@ -10,7 +10,7 @@ export default async function LinksPage({
 }) {
   const { env } = await pageOwner();
   const query = await searchParams;
-  const page = await ownerList("link", { ...query, state: "all" });
+  const page = await ownerList("link", query);
   const selected =
     query.item && query.item !== "new"
       ? await ownerResource("link", query.item)
@@ -22,6 +22,7 @@ export default async function LinksPage({
       creating={query.item === "new"}
       origin={config(env).origin}
       query={query.q ?? ""}
+      state={query.state ?? "all"}
     />
   );
 }
