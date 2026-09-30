@@ -123,7 +123,7 @@ describe("configuration, vCard, and portable export", () => {
     ).toBe(false);
     expect(response.headers.get("Cache-Control")).toBe("no-store");
   });
-  it("purges deleted text without affecting a reused address and respects read-only maintenance", async () => {
+  it("purges deleted text while preserving address ownership and respects read-only maintenance", async () => {
     const item = await createResource(
       env,
       "paste",
@@ -136,14 +136,13 @@ describe("configuration, vCard, and portable export", () => {
       },
       crypto.randomUUID(),
     );
-    expect(item.slug).toMatch(/^[23456789abcdefghjkmnpqrstuvwxyz]{4}$/);
+    expect(item.slug).toMatch(/^[23456789abcdefghjkmnpqrstuvwxyz]{12}$/);
     await deleteResource(env, "paste", item.id, 1);
     const replacement = await createResource(
       env,
       "paste",
       {
         title: "New note",
-        slug: item.slug,
         state: "active",
         expiresAt: null,
         body: "Keep this body",
@@ -151,7 +150,8 @@ describe("configuration, vCard, and portable export", () => {
       },
       crypto.randomUUID(),
     );
-    expect((await publicResource(env, "paste", item.slug))?.id).toBe(
+    expect(await publicResource(env, "paste", item.slug)).toBeNull();
+    expect((await publicResource(env, "paste", replacement.slug))?.id).toBe(
       replacement.id,
     );
     const later = Date.now() + 31 * 86400000;
@@ -172,7 +172,15 @@ describe("configuration, vCard, and portable export", () => {
         .bind(item.id)
         .first("slug"),
     ).toBe(item.slug);
-    expect((await publicResource(env, "paste", item.slug))?.id).toBe(
+    expect(
+      await env.DB.prepare(
+        "SELECT resource_id FROM resource_addresses WHERE kind='paste' AND slug=?",
+      )
+        .bind(item.slug)
+        .first("resource_id"),
+    ).toBe(item.id);
+    expect(await publicResource(env, "paste", item.slug)).toBeNull();
+    expect((await publicResource(env, "paste", replacement.slug))?.id).toBe(
       replacement.id,
     );
     expect(
