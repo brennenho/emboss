@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Copy, Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -31,7 +31,14 @@ const fieldLabels: Record<string, string> = {
   quotaBytes: "Storage limit",
   showPoweredBy: "Emboss credit",
 };
-const hiddenFields = new Set(["id", "revision", "updatedAt", "createdAt"]);
+const hiddenFields = new Set([
+  "id",
+  "revision",
+  "updatedAt",
+  "createdAt",
+  // A rename command option, not a value stored on the saved resource.
+  "previousAddress",
+]);
 
 function fieldValue(key: string, value: unknown): string {
   if (key === "avatarBlobId")
@@ -64,7 +71,7 @@ function fieldValue(key: string, value: unknown): string {
 }
 
 function DraftFields({ value, label }: { value: unknown; label: string }) {
-  const entries =
+  const entries: [string, unknown][] =
     value && typeof value === "object"
       ? Object.entries(value).filter(([key]) => !hiddenFields.has(key))
       : [["body", value]];
@@ -75,17 +82,17 @@ function DraftFields({ value, label }: { value: unknown; label: string }) {
       className="bg-card max-h-80 overflow-auto rounded border px-3"
     >
       {entries.map(([key, value]) => (
-        <div key={key as string} className="border-b py-3 last:border-0">
+        <div key={key} className="border-b py-3 last:border-0">
           <dt className="text-muted-foreground mb-1 text-xs">
-            {fieldLabels[key as string] ??
-              String(key)
+            {fieldLabels[key] ??
+              key
                 .replace(/([A-Z])/g, " $1")
                 .replace(/^./, (letter) => letter.toUpperCase())}
           </dt>
           <dd
             className={`text-sm break-words whitespace-pre-wrap ${key === "body" ? "font-mono" : ""}`}
           >
-            {fieldValue(key as string, value)}
+            {fieldValue(key, value)}
           </dd>
         </div>
       ))}
@@ -126,24 +133,28 @@ export function ConflictRecovery<R>({
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState("");
   const [loadError, setLoadError] = useState("");
+  const requestId = useRef(0);
 
   if (error?.code !== "CONFLICT") return null;
 
   async function review() {
+    const request = ++requestId.current;
     setOpen(true);
     setPending(true);
     setLoadError("");
     setLatest(null);
     try {
-      setLatest({ record: await loadLatest() });
+      const record = await loadLatest();
+      if (request === requestId.current) setLatest({ record });
     } catch (cause) {
-      setLoadError(
-        cause instanceof Error
-          ? cause.message
-          : "Could not load the saved version. Try again.",
-      );
+      if (request === requestId.current)
+        setLoadError(
+          cause instanceof Error
+            ? cause.message
+            : "Could not load the saved version. Try again.",
+        );
     } finally {
-      setPending(false);
+      if (request === requestId.current) setPending(false);
     }
   }
 
