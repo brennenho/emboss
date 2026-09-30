@@ -20,6 +20,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 type GuardScope = "location" | "pathname";
+type NavigationOptions = { resetEditor?: boolean };
 type PendingNavigation = {
   action: () => void;
   guards: string[];
@@ -28,7 +29,11 @@ type PendingNavigation = {
 };
 const GuardContext = createContext<{
   setDirty: (id: string, dirty: boolean, scope: GuardScope) => void;
-  go: (action: () => void, destination?: string) => void;
+  go: (
+    action: () => void,
+    destination?: string,
+    options?: NavigationOptions,
+  ) => void;
 }>({ setDirty: () => {}, go: (action) => action() });
 export function NavigationGuard({ children }: { children: React.ReactNode }) {
   const [next, setNext] = useState<PendingNavigation | null>(null);
@@ -46,6 +51,7 @@ export function NavigationGuard({ children }: { children: React.ReactNode }) {
       action: () => void,
       destination?: string,
       currentHref = window.location.href,
+      options: NavigationOptions = {},
     ): PendingNavigation => {
       const current = new URL(currentHref);
       const target = destination ? new URL(destination, current) : null;
@@ -54,7 +60,9 @@ export function NavigationGuard({ children }: { children: React.ReactNode }) {
         target.pathname === current.pathname;
       const sameLocation = samePath && target?.search === current.search;
       const blocking = [...guards.current].filter(([, scope]) =>
-        scope === "pathname" ? !samePath : !sameLocation,
+        scope === "pathname"
+          ? !samePath
+          : !sameLocation || !!options.resetEditor,
       );
       return {
         action,
@@ -66,8 +74,13 @@ export function NavigationGuard({ children }: { children: React.ReactNode }) {
     [],
   );
   const go = useCallback(
-    (action: () => void, destination?: string) => {
-      const navigation = pendingNavigation(action, destination);
+    (action: () => void, destination?: string, options?: NavigationOptions) => {
+      const navigation = pendingNavigation(
+        action,
+        destination,
+        undefined,
+        options,
+      );
       if (navigation.guards.length) setNext(navigation);
       else action();
     },

@@ -97,16 +97,20 @@ export function useCollectionNavigation(kind: Collection) {
   return {
     open(id: string, onNavigate?: () => void) {
       const destination = target((next) => next.set("item", id));
-      go(() => {
-        returnPosition.current = {
-          id: id === "new" ? null : id,
-          scrollY: window.scrollY,
-          libraryScroll: visibleElement(".paste-library")?.scrollTop ?? 0,
-          query,
-        };
-        onNavigate?.();
-        router.push(destination, { scroll: false });
-      }, destination);
+      go(
+        () => {
+          returnPosition.current = {
+            id: id === "new" ? null : id,
+            scrollY: window.scrollY,
+            libraryScroll: visibleElement(".paste-library")?.scrollTop ?? 0,
+            query,
+          };
+          onNavigate?.();
+          router.push(destination, { scroll: false });
+        },
+        destination,
+        { resetEditor: id === item && !!onNavigate },
+      );
     },
     close() {
       const destination = target((next) => next.delete("item"));
