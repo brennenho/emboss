@@ -94,9 +94,14 @@ migrations before deploying code that needs them. Prefer backward-compatible
 schema changes; a Worker rollback does not undo a migration. Restoring old SQL
 requires a matching application version and its migration history.
 
-The two handwritten trigger sets enforce immutable addresses, subtype consistency,
-ready-only file publication, and atomic session revocation. Preserve them when
-changing the schema; Drizzle snapshots do not model these triggers.
+The handwritten triggers enforce fixed paste/file addresses, immutable resource
+kinds, subtype consistency, ready-only file publication, and atomic session
+revocation. Preserve them when changing the schema; Drizzle snapshots do not model
+these triggers.
+
+Migration `0003_editable_link_addresses.sql` allows link addresses to change while
+preserving the other address and kind constraints. Apply it before deploying link
+editing. It does not modify existing links or enable disabled links.
 
 ## Cleanup and observability
 
