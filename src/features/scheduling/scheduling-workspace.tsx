@@ -1,4 +1,5 @@
 "use client";
+import { EditorReady } from "@/components/patterns/editor-ready";
 import { ConflictRecovery } from "@/components/patterns/conflict-recovery";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
@@ -24,7 +25,7 @@ export function SchedulingWorkspace({
   const router = useRouter();
   const url = origin + "/meet";
   return (
-    <>
+    <EditorReady>
       <header className="workspace-header">
         <div>
           <h1>Scheduling</h1>
@@ -136,6 +137,6 @@ export function SchedulingWorkspace({
           </div>
         </aside>
       </div>
-    </>
+    </EditorReady>
   );
 }

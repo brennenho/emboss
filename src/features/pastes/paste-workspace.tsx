@@ -1,4 +1,5 @@
 "use client";
+import { EditorReady } from "@/components/patterns/editor-ready";
 import dynamic from "next/dynamic";
 import { useState } from "react";
 import { ArrowLeft, Plus, X } from "lucide-react";
@@ -264,266 +265,271 @@ function PasteEditor({
   }
   return (
     <section className="paste-editor" aria-labelledby="paste-editor-title">
-      <Button className="inspector-back" variant="ghost" onClick={onClose}>
-        <ArrowLeft />
-        Back to pastes
-      </Button>
-      <div className="inspector-top">
-        <h2 id="paste-editor-title" data-editor-heading tabIndex={-1}>
-          {item ? item.title : "New paste"}
-        </h2>
-        <Button
-          className="inspector-close"
-          size="icon"
-          variant="ghost"
-          aria-label="Close editor"
-          onClick={onClose}
-        >
-          <X />
+      <EditorReady>
+        <Button className="inspector-back" variant="ghost" onClick={onClose}>
+          <ArrowLeft />
+          Back to pastes
         </Button>
-      </div>
-      <div className="form-stack paste-composer">
-        {item && (
-          <ResourceSummary
-            url={item.url}
-            title={item.title}
-            state={item.displayState}
-          />
-        )}
-        <MutationFeedback
-          {...mutation}
-          onReauthenticated={() => mutation.setError(null)}
-        />
-        {item && (
-          <ConflictRecovery
-            error={mutation.error}
-            draft={form}
-            loadLatest={() =>
-              api<ResourceDto>(`/api/admin/pastes/${item.id}`, "GET")
-            }
-            onUseLatest={editor.reset}
-          />
-        )}
-        <div className="paste-title-field">
-          <FormField
-            id="title"
-            label="Title (optional)"
-            error={mutation.error?.fields?.title}
+        <div className="inspector-top">
+          <h2 id="paste-editor-title" data-editor-heading tabIndex={-1}>
+            {item ? item.title : "New paste"}
+          </h2>
+          <Button
+            className="inspector-close"
+            size="icon"
+            variant="ghost"
+            aria-label="Close editor"
+            onClick={onClose}
           >
-            <Input
-              {...fieldProps("title", mutation.error?.fields)}
-              value={form.title}
-              onChange={(e) => change("title", e.target.value)}
-              maxLength={160}
-              placeholder="Untitled paste"
-            />
-          </FormField>
+            <X />
+          </Button>
         </div>
-        <Tabs value={tab} onValueChange={setTab}>
-          <div className="paste-toolbar">
-            <div className="paste-format-controls">
-              <Select
-                value={form.format}
-                onValueChange={(v) => change("format", v)}
-              >
-                <SelectTrigger id="format" aria-label="Format">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {Object.entries(pasteFormatLabels).map(([value, label]) => (
-                    <SelectItem key={value} value={value}>
-                      {label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {form.format === "code" && (
+        <div className="form-stack paste-composer">
+          {item && (
+            <ResourceSummary
+              url={item.url}
+              title={item.title}
+              state={item.displayState}
+            />
+          )}
+          <MutationFeedback
+            {...mutation}
+            onReauthenticated={() => mutation.setError(null)}
+          />
+          {item && (
+            <ConflictRecovery
+              error={mutation.error}
+              draft={form}
+              loadLatest={() =>
+                api<ResourceDto>(`/api/admin/pastes/${item.id}`, "GET")
+              }
+              onUseLatest={editor.reset}
+            />
+          )}
+          <div className="paste-title-field">
+            <FormField
+              id="title"
+              label="Title (optional)"
+              error={mutation.error?.fields?.title}
+            >
+              <Input
+                {...fieldProps("title", mutation.error?.fields)}
+                value={form.title}
+                onChange={(e) => change("title", e.target.value)}
+                maxLength={160}
+                placeholder="Untitled paste"
+              />
+            </FormField>
+          </div>
+          <Tabs value={tab} onValueChange={setTab}>
+            <div className="paste-toolbar">
+              <div className="paste-format-controls">
                 <Select
-                  value={form.language}
-                  onValueChange={(v) => change("language", v)}
+                  value={form.format}
+                  onValueChange={(v) => change("format", v)}
                 >
-                  <SelectTrigger id="language" aria-label="Language">
+                  <SelectTrigger id="format" aria-label="Format">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {Object.entries(pasteLanguageLabels).map(
-                      ([value, label]) => (
-                        <SelectItem key={value} value={value}>
-                          {label}
-                        </SelectItem>
-                      ),
-                    )}
+                    {Object.entries(pasteFormatLabels).map(([value, label]) => (
+                      <SelectItem key={value} value={value}>
+                        {label}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
-              )}
+                {form.format === "code" && (
+                  <Select
+                    value={form.language}
+                    onValueChange={(v) => change("language", v)}
+                  >
+                    <SelectTrigger id="language" aria-label="Language">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {Object.entries(pasteLanguageLabels).map(
+                        ([value, label]) => (
+                          <SelectItem key={value} value={value}>
+                            {label}
+                          </SelectItem>
+                        ),
+                      )}
+                    </SelectContent>
+                  </Select>
+                )}
+              </div>
+              <TabsList aria-label="Paste view">
+                <TabsTrigger value="edit">Edit</TabsTrigger>
+                <TabsTrigger value="preview">Preview</TabsTrigger>
+              </TabsList>
             </div>
-            <TabsList aria-label="Paste view">
-              <TabsTrigger value="edit">Edit</TabsTrigger>
-              <TabsTrigger value="preview">Preview</TabsTrigger>
-            </TabsList>
-          </div>
-          <TabsContent value="edit" forceMount hidden={tab !== "edit"}>
-            <FormField
-              id="body"
-              label="Content"
-              error={bodyError}
-              help={`${bytes.toLocaleString()} / ${maxBytes.toLocaleString()} bytes`}
-            >
-              {form.format === "code" ? (
-                <CodeEditor
-                  autoFocus={!item}
-                  error={bodyError}
-                  value={form.body}
-                  language={form.language}
-                  onChange={(v) => change("body", v)}
-                />
-              ) : (
-                <Textarea
-                  {...fieldProps(
-                    "body",
-                    bodyError ? { body: bodyError } : undefined,
-                    true,
-                  )}
-                  className="paste-body [field-sizing:fixed] h-[clamp(260px,44dvh,480px)] font-mono"
-                  value={form.body}
-                  onChange={(e) => change("body", e.target.value)}
-                  autoFocus={!item}
-                  spellCheck={true}
-                  placeholder="Write or paste your content…"
-                />
-              )}
-            </FormField>
-          </TabsContent>
-          <TabsContent value="preview">
-            <div className="editor-surface paste-preview p-5">
-              {form.body ? (
-                <MarkdownPreview
-                  body={form.body}
-                  format={form.format}
-                  language={form.language}
-                />
-              ) : (
-                <p className="muted">Your content will appear here.</p>
-              )}
-            </div>
-            <p className="muted mt-2">Preview of your current edits.</p>
-          </TabsContent>
-        </Tabs>
-        <details
-          className="sharing-options paste-sharing-options"
-          open={
-            !!(
-              mutation.error?.fields?.slug || mutation.error?.fields?.expiresAt
-            )
-          }
-        >
-          <summary>Sharing options</summary>
-          <div className="form-grid">
-            <FormField
-              id="slug"
-              label={item ? "Short address" : "Custom address"}
-              help={
-                item
-                  ? "Fixed after creation."
-                  : form.slug.trim()
-                    ? `${origin}/p/${form.slug.trim()}`
-                    : `Leave blank to generate ${generatedContentSlugLength} characters.`
-              }
-              error={mutation.error?.fields?.slug}
-            >
-              <Input
-                {...fieldProps("slug", mutation.error?.fields, true)}
-                value={form.slug}
-                onChange={(e) => change("slug", e.target.value)}
-                disabled={!!item}
-                placeholder="Automatic"
-                maxLength={48}
-                autoCapitalize="none"
-                spellCheck={false}
-              />
-            </FormField>
-            <ExpiryField
-              value={form.expiresAt}
-              onChange={(v) => change("expiresAt", v)}
-              error={mutation.error?.fields?.expiresAt}
-            />
-          </div>
-          <p className="muted">
-            Anyone with the link can read a published paste.
-          </p>
-        </details>
-        {!item && (
-          <p className="muted">Only you can open this until you publish it.</p>
-        )}
-        <EditorActions
-          dirty={editor.dirty}
-          pending={mutation.pending}
-          isNew={!editor.saved.id}
-        >
-          {item?.displayState === "active" && !editor.dirty ? (
-            <CopyButton
-              value={item.url}
-              label="Copy link"
-              showLabel
-              variant="default"
-            />
-          ) : (
-            <Button
-              disabled={
-                mutation.pending ||
-                bytes > maxBytes ||
-                !form.body ||
-                (!!item && !editor.dirty)
-              }
-              onClick={() =>
-                void save(
-                  item?.state === "disabled"
-                    ? "disabled"
-                    : item?.state === "active"
-                      ? "active"
-                      : "draft",
-                )
-              }
-            >
-              {mutation.pending
-                ? "Saving…"
-                : item
-                  ? "Save changes"
-                  : "Save draft"}
-            </Button>
-          )}
-          <Button
-            variant="outline"
-            disabled={
-              mutation.pending ||
-              (item?.state !== "active" && (bytes > maxBytes || !form.body))
-            }
-            onClick={() =>
-              void (item?.state === "active"
-                ? changeState("disabled")
-                : save("active"))
+            <TabsContent value="edit" forceMount hidden={tab !== "edit"}>
+              <FormField
+                id="body"
+                label="Content"
+                error={bodyError}
+                help={`${bytes.toLocaleString()} / ${maxBytes.toLocaleString()} bytes`}
+              >
+                {form.format === "code" ? (
+                  <CodeEditor
+                    autoFocus={!item}
+                    error={bodyError}
+                    value={form.body}
+                    language={form.language}
+                    onChange={(v) => change("body", v)}
+                  />
+                ) : (
+                  <Textarea
+                    {...fieldProps(
+                      "body",
+                      bodyError ? { body: bodyError } : undefined,
+                      true,
+                    )}
+                    className="paste-body [field-sizing:fixed] h-[clamp(260px,44dvh,480px)] font-mono"
+                    value={form.body}
+                    onChange={(e) => change("body", e.target.value)}
+                    autoFocus={!item}
+                    spellCheck={true}
+                    placeholder="Write or paste your content…"
+                  />
+                )}
+              </FormField>
+            </TabsContent>
+            <TabsContent value="preview">
+              <div className="editor-surface paste-preview p-5">
+                {form.body ? (
+                  <MarkdownPreview
+                    body={form.body}
+                    format={form.format}
+                    language={form.language}
+                  />
+                ) : (
+                  <p className="muted">Your content will appear here.</p>
+                )}
+              </div>
+              <p className="muted mt-2">Preview of your current edits.</p>
+            </TabsContent>
+          </Tabs>
+          <details
+            className="sharing-options paste-sharing-options"
+            open={
+              !!(
+                mutation.error?.fields?.slug ||
+                mutation.error?.fields?.expiresAt
+              )
             }
           >
-            {item?.state === "active" ? "Pause sharing" : "Publish paste"}
-          </Button>
-        </EditorActions>
-        {item && (
-          <div className="form-actions resource-danger-zone">
-            <DeleteButton
-              title={item.title}
-              pending={mutation.pending}
-              onDelete={() =>
-                void mutation.run(async () => {
-                  await api(`/api/admin/pastes/${item.id}`, "DELETE", {
-                    expectedRevision: item.revision,
-                  });
-                  onDeleted();
-                })
+            <summary>Sharing options</summary>
+            <div className="form-grid">
+              <FormField
+                id="slug"
+                label={item ? "Short address" : "Custom address"}
+                help={
+                  item
+                    ? "Fixed after creation."
+                    : form.slug.trim()
+                      ? `${origin}/p/${form.slug.trim()}`
+                      : `Leave blank to generate ${generatedContentSlugLength} characters.`
+                }
+                error={mutation.error?.fields?.slug}
+              >
+                <Input
+                  {...fieldProps("slug", mutation.error?.fields, true)}
+                  value={form.slug}
+                  onChange={(e) => change("slug", e.target.value)}
+                  disabled={!!item}
+                  placeholder="Automatic"
+                  maxLength={48}
+                  autoCapitalize="none"
+                  spellCheck={false}
+                />
+              </FormField>
+              <ExpiryField
+                value={form.expiresAt}
+                onChange={(v) => change("expiresAt", v)}
+                error={mutation.error?.fields?.expiresAt}
+              />
+            </div>
+            <p className="muted">
+              Anyone with the link can read a published paste.
+            </p>
+          </details>
+          {!item && (
+            <p className="muted">
+              Only you can open this until you publish it.
+            </p>
+          )}
+          <EditorActions
+            dirty={editor.dirty}
+            pending={mutation.pending}
+            isNew={!editor.saved.id}
+          >
+            {item?.displayState === "active" && !editor.dirty ? (
+              <CopyButton
+                value={item.url}
+                label="Copy link"
+                showLabel
+                variant="default"
+              />
+            ) : (
+              <Button
+                disabled={
+                  mutation.pending ||
+                  bytes > maxBytes ||
+                  !form.body ||
+                  (!!item && !editor.dirty)
+                }
+                onClick={() =>
+                  void save(
+                    item?.state === "disabled"
+                      ? "disabled"
+                      : item?.state === "active"
+                        ? "active"
+                        : "draft",
+                  )
+                }
+              >
+                {mutation.pending
+                  ? "Saving…"
+                  : item
+                    ? "Save changes"
+                    : "Save draft"}
+              </Button>
+            )}
+            <Button
+              variant="outline"
+              disabled={
+                mutation.pending ||
+                (item?.state !== "active" && (bytes > maxBytes || !form.body))
               }
-            />
-          </div>
-        )}
-      </div>
+              onClick={() =>
+                void (item?.state === "active"
+                  ? changeState("disabled")
+                  : save("active"))
+              }
+            >
+              {item?.state === "active" ? "Pause sharing" : "Publish paste"}
+            </Button>
+          </EditorActions>
+          {item && (
+            <div className="form-actions resource-danger-zone">
+              <DeleteButton
+                title={item.title}
+                pending={mutation.pending}
+                onDelete={() =>
+                  void mutation.run(async () => {
+                    await api(`/api/admin/pastes/${item.id}`, "DELETE", {
+                      expectedRevision: item.revision,
+                    });
+                    onDeleted();
+                  })
+                }
+              />
+            </div>
+          )}
+        </div>
+      </EditorReady>
     </section>
   );
 }

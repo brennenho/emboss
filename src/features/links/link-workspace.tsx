@@ -1,4 +1,5 @@
 "use client";
+import { EditorReady } from "@/components/patterns/editor-ready";
 
 import { useState, useTransition } from "react";
 import { Plus, X, ExternalLink, ArrowLeft } from "lucide-react";
@@ -295,209 +296,211 @@ function LinkEditor({
       aria-busy={refreshing}
       data-revision={item?.revision}
     >
-      <Button variant="ghost" className="inspector-back" onClick={onClose}>
-        <ArrowLeft />
-        Back to links
-      </Button>
-      <div className="inspector-top">
-        <h2 data-editor-heading tabIndex={-1}>
-          {item ? item.title : "New link"}
-        </h2>
-        <Button
-          variant="ghost"
-          size="icon"
-          aria-label="Close editor"
-          onClick={onClose}
-        >
-          <X />
+      <EditorReady>
+        <Button variant="ghost" className="inspector-back" onClick={onClose}>
+          <ArrowLeft />
+          Back to links
         </Button>
-      </div>
-      {item && (
-        <ResourceSummary
-          url={item.url}
-          title={item.title}
-          state={item.displayState}
-          notice={
-            created && item.displayState === "active" && !editor.dirty
-              ? "Your link is ready"
-              : undefined
-          }
-        />
-      )}
-      <form
-        className="form-stack"
-        onSubmit={(event) => {
-          event.preventDefault();
-          void save();
-        }}
-      >
-        <EditorActions
-          dirty={editor.dirty}
-          pending={mutation.pending}
-          isNew={!item}
-        >
+        <div className="inspector-top">
+          <h2 data-editor-heading tabIndex={-1}>
+            {item ? item.title : "New link"}
+          </h2>
           <Button
-            type="submit"
-            variant={!item || editor.dirty ? "default" : "outline"}
-            disabled={
-              mutation.pending || refreshing || (!!item && !editor.dirty)
-            }
+            variant="ghost"
+            size="icon"
+            aria-label="Close editor"
+            onClick={onClose}
           >
-            {mutation.pending
-              ? "Saving…"
-              : item
-                ? "Save changes"
-                : "Create live link"}
+            <X />
           </Button>
-          {item && (
-            <Button
-              type="button"
-              variant="outline"
-              disabled={mutation.pending || refreshing}
-              onClick={() =>
-                item.state === "active" ? void pause() : void save("active")
-              }
-            >
-              {item.state === "active" ? "Pause sharing" : "Resume link"}
-            </Button>
-          )}
-        </EditorActions>
-        {!item && (
-          <p className="muted">
-            Anyone with the link can open it as soon as you create it.
-          </p>
-        )}
-        <FormField
-          id="destinationUrl"
-          label="Destination URL"
-          error={mutation.error?.fields?.destinationUrl}
-        >
-          <Input
-            {...fieldProps("destinationUrl", mutation.error?.fields)}
-            type="url"
-            autoFocus={!item}
-            maxLength={2048}
-            required
-            value={form.destinationUrl}
-            placeholder="https://example.com/page"
-            onChange={(event) => change("destinationUrl", event.target.value)}
+        </div>
+        {item && (
+          <ResourceSummary
+            url={item.url}
+            title={item.title}
+            state={item.displayState}
+            notice={
+              created && item.displayState === "active" && !editor.dirty
+                ? "Your link is ready"
+                : undefined
+            }
           />
-        </FormField>
-        <details
-          className="sharing-options"
-          open={optionsOpen || !!optionalError}
-          onToggle={(event) => setOptionsOpen(event.currentTarget.open)}
+        )}
+        <form
+          className="form-stack"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void save();
+          }}
         >
-          <summary>
-            {item ? "Link settings" : "Label, address and expiry"}
-          </summary>
-          <div className="form-stack pt-4">
-            <FormField
-              id="title"
-              label="Label"
-              help="Defaults to the destination domain."
-              error={mutation.error?.fields?.title}
-            >
-              <Input
-                {...fieldProps("title", mutation.error?.fields, true)}
-                value={form.title}
-                maxLength={160}
-                onChange={(event) => change("title", event.target.value)}
-              />
-            </FormField>
-            <FormField
-              id="slug"
-              label="Custom address"
-              error={mutation.error?.fields?.slug}
-              help={
-                form.slug.trim()
-                  ? `${origin}/${form.slug.trim()}`
-                  : `Leave blank to generate ${generatedSlugLength} characters.`
+          <EditorActions
+            dirty={editor.dirty}
+            pending={mutation.pending}
+            isNew={!item}
+          >
+            <Button
+              type="submit"
+              variant={!item || editor.dirty ? "default" : "outline"}
+              disabled={
+                mutation.pending || refreshing || (!!item && !editor.dirty)
               }
             >
-              <Input
-                {...fieldProps("slug", mutation.error?.fields, true)}
-                value={form.slug}
-                required={!!item}
-                maxLength={48}
-                autoCapitalize="none"
-                spellCheck={false}
-                placeholder="Automatic"
-                onChange={(event) => change("slug", event.target.value)}
-              />
-            </FormField>
-            {item && form.slug.trim() !== item.slug && (
-              <div className="form-stack gap-2">
-                <label className="flex items-start gap-2 text-sm">
-                  <input
-                    type="checkbox"
-                    className="accent-primary mt-1"
-                    checked={form.previousAddress === "alias"}
-                    onChange={(event) =>
-                      change(
-                        "previousAddress",
-                        event.target.checked ? "alias" : "retire",
-                      )
-                    }
-                  />
-                  Keep /{item.slug} working
-                </label>
+              {mutation.pending
+                ? "Saving…"
+                : item
+                  ? "Save changes"
+                  : "Create live link"}
+            </Button>
+            {item && (
+              <Button
+                type="button"
+                variant="outline"
+                disabled={mutation.pending || refreshing}
+                onClick={() =>
+                  item.state === "active" ? void pause() : void save("active")
+                }
+              >
+                {item.state === "active" ? "Pause sharing" : "Resume link"}
+              </Button>
+            )}
+          </EditorActions>
+          {!item && (
+            <p className="muted">
+              Anyone with the link can open it as soon as you create it.
+            </p>
+          )}
+          <FormField
+            id="destinationUrl"
+            label="Destination URL"
+            error={mutation.error?.fields?.destinationUrl}
+          >
+            <Input
+              {...fieldProps("destinationUrl", mutation.error?.fields)}
+              type="url"
+              autoFocus={!item}
+              maxLength={2048}
+              required
+              value={form.destinationUrl}
+              placeholder="https://example.com/page"
+              onChange={(event) => change("destinationUrl", event.target.value)}
+            />
+          </FormField>
+          <details
+            className="sharing-options"
+            open={optionsOpen || !!optionalError}
+            onToggle={(event) => setOptionsOpen(event.currentTarget.open)}
+          >
+            <summary>
+              {item ? "Link settings" : "Label, address and expiry"}
+            </summary>
+            <div className="form-stack pt-4">
+              <FormField
+                id="title"
+                label="Label"
+                help="Defaults to the destination domain."
+                error={mutation.error?.fields?.title}
+              >
+                <Input
+                  {...fieldProps("title", mutation.error?.fields, true)}
+                  value={form.title}
+                  maxLength={160}
+                  onChange={(event) => change("title", event.target.value)}
+                />
+              </FormField>
+              <FormField
+                id="slug"
+                label="Custom address"
+                error={mutation.error?.fields?.slug}
+                help={
+                  form.slug.trim()
+                    ? `${origin}/${form.slug.trim()}`
+                    : `Leave blank to generate ${generatedSlugLength} characters.`
+                }
+              >
+                <Input
+                  {...fieldProps("slug", mutation.error?.fields, true)}
+                  value={form.slug}
+                  required={!!item}
+                  maxLength={48}
+                  autoCapitalize="none"
+                  spellCheck={false}
+                  placeholder="Automatic"
+                  onChange={(event) => change("slug", event.target.value)}
+                />
+              </FormField>
+              {item && form.slug.trim() !== item.slug && (
+                <div className="form-stack gap-2">
+                  <label className="flex items-start gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      className="accent-primary mt-1"
+                      checked={form.previousAddress === "alias"}
+                      onChange={(event) =>
+                        change(
+                          "previousAddress",
+                          event.target.checked ? "alias" : "retire",
+                        )
+                      }
+                    />
+                    Keep /{item.slug} working
+                  </label>
+                  <p className="muted">
+                    {form.previousAddress === "alias"
+                      ? "Existing links and QR codes will reach the same destination."
+                      : "The previous address will stop working and stay reserved."}
+                  </p>
+                </div>
+              )}
+              {!!item?.aliases?.length && (
                 <p className="muted">
-                  {form.previousAddress === "alias"
-                    ? "Existing links and QR codes will reach the same destination."
-                    : "The previous address will stop working and stay reserved."}
+                  Also available at{" "}
+                  {item.aliases.map((alias) => `/${alias}`).join(", ")}
                 </p>
-              </div>
-            )}
-            {!!item?.aliases?.length && (
-              <p className="muted">
-                Also available at{" "}
-                {item.aliases.map((alias) => `/${alias}`).join(", ")}
-              </p>
-            )}
-            <ExpiryField
-              showOptionalHint={false}
-              value={form.expiresAt}
-              onChange={(value) => change("expiresAt", value)}
-              error={mutation.error?.fields?.expiresAt}
+              )}
+              <ExpiryField
+                showOptionalHint={false}
+                value={form.expiresAt}
+                onChange={(value) => change("expiresAt", value)}
+                error={mutation.error?.fields?.expiresAt}
+              />
+            </div>
+          </details>
+          <MutationFeedback
+            {...mutation}
+            onReauthenticated={() => mutation.setError(null)}
+          />
+          {item && (
+            <ConflictRecovery
+              error={mutation.error}
+              draft={form}
+              loadLatest={() => api<ResourceDto>(`/api/admin/links/${item.id}`)}
+              onUseLatest={editor.reset}
+            />
+          )}
+        </form>
+        {item && (
+          <div className="form-actions mt-6 border-t pt-5">
+            <Button variant="ghost" asChild>
+              <a href={item.destinationUrl} target="_blank" rel="noreferrer">
+                Open destination
+                <ExternalLink />
+              </a>
+            </Button>
+            <DeleteButton
+              title={item.title}
+              pending={mutation.pending}
+              onDelete={() =>
+                void mutation.run(async () => {
+                  await api(`/api/admin/links/${item.id}`, "DELETE", {
+                    expectedRevision: item.revision,
+                  });
+                  onDeleted();
+                })
+              }
             />
           </div>
-        </details>
-        <MutationFeedback
-          {...mutation}
-          onReauthenticated={() => mutation.setError(null)}
-        />
-        {item && (
-          <ConflictRecovery
-            error={mutation.error}
-            draft={form}
-            loadLatest={() => api<ResourceDto>(`/api/admin/links/${item.id}`)}
-            onUseLatest={editor.reset}
-          />
         )}
-      </form>
-      {item && (
-        <div className="form-actions mt-6 border-t pt-5">
-          <Button variant="ghost" asChild>
-            <a href={item.destinationUrl} target="_blank" rel="noreferrer">
-              Open destination
-              <ExternalLink />
-            </a>
-          </Button>
-          <DeleteButton
-            title={item.title}
-            pending={mutation.pending}
-            onDelete={() =>
-              void mutation.run(async () => {
-                await api(`/api/admin/links/${item.id}`, "DELETE", {
-                  expectedRevision: item.revision,
-                });
-                onDeleted();
-              })
-            }
-          />
-        </div>
-      )}
+      </EditorReady>
     </aside>
   );
 }

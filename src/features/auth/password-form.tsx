@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { FormField } from "@/components/patterns/form-field";
+import { EditorReady } from "@/components/patterns/editor-ready";
 import { api } from "@/shared/client-api";
 export function PasswordForm({ onSuccess }: { onSuccess?: () => void }) {
   const [password, setPassword] = useState(""),
@@ -28,41 +29,43 @@ export function PasswordForm({ onSuccess }: { onSuccess?: () => void }) {
     }
   }
   return (
-    <form onSubmit={submit} className="form-stack">
-      <FormField id="password" label="Admin password">
-        <div className="relative">
-          <Input
-            id="password"
-            name="password"
-            type={show ? "text" : "password"}
-            autoComplete="current-password"
-            required
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            className="pr-12"
-            aria-invalid={!!error}
-            aria-describedby={error ? "login-error" : undefined}
-          />
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="absolute top-0 right-0"
-            aria-label={show ? "Hide password" : "Show password"}
-            onClick={() => setShow(!show)}
-          >
-            {show ? <EyeOff /> : <Eye />}
-          </Button>
-        </div>
-      </FormField>
-      {error && (
-        <Alert variant="destructive" id="login-error">
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
-      )}
-      <Button type="submit" disabled={pending}>
-        {pending ? "Signing in…" : "Sign in"}
-      </Button>
-    </form>
+    <EditorReady>
+      <form onSubmit={submit} className="form-stack">
+        <FormField id="password" label="Admin password">
+          <div className="relative">
+            <Input
+              id="password"
+              name="password"
+              type={show ? "text" : "password"}
+              autoComplete="current-password"
+              required
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className="pr-12"
+              aria-invalid={!!error}
+              aria-describedby={error ? "login-error" : undefined}
+            />
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="absolute top-0 right-0"
+              aria-label={show ? "Hide password" : "Show password"}
+              onClick={() => setShow(!show)}
+            >
+              {show ? <EyeOff /> : <Eye />}
+            </Button>
+          </div>
+        </FormField>
+        {error && (
+          <Alert variant="destructive" id="login-error">
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
+        <Button type="submit" disabled={pending}>
+          {pending ? "Signing in…" : "Sign in"}
+        </Button>
+      </form>
+    </EditorReady>
   );
 }

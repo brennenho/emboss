@@ -1,4 +1,5 @@
 "use client";
+import { EditorReady } from "@/components/patterns/editor-ready";
 import { useState } from "react";
 import Link from "next/link";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -104,7 +105,7 @@ export function CardWorkspace({
       ));
   }
   return (
-    <>
+    <EditorReady>
       <header className="workspace-header">
         <div>
           <h1>Business card</h1>
@@ -353,6 +354,6 @@ export function CardWorkspace({
           </TabsContent>
         </div>
       </Tabs>
-    </>
+    </EditorReady>
   );
 }

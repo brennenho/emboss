@@ -1,4 +1,5 @@
 "use client";
+import { EditorReady } from "@/components/patterns/editor-ready";
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -91,7 +92,7 @@ export function SettingsWorkspace({
     ({ key }) => mutation.error?.fields?.[key],
   );
   return (
-    <>
+    <EditorReady>
       <header className="workspace-header">
         <div>
           <h1>Settings</h1>
@@ -342,6 +343,6 @@ export function SettingsWorkspace({
           </section>
         </aside>
       </div>
-    </>
+    </EditorReady>
   );
 }

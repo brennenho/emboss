@@ -1,4 +1,5 @@
 "use client";
+import { EditorReady } from "@/components/patterns/editor-ready";
 
 import { useRouter } from "next/navigation";
 import Image from "next/image";
@@ -250,128 +251,130 @@ function FileEditor({
       aria-label="File details"
       data-revision={item.revision}
     >
-      <Button variant="ghost" className="inspector-back" onClick={onClose}>
-        <ArrowLeft />
-        Back to files
-      </Button>
-      <div className="inspector-top">
-        <h2 data-editor-heading tabIndex={-1}>
-          {item.title}
-        </h2>
-        <Button
-          size="icon"
-          variant="ghost"
-          aria-label="Close editor"
-          onClick={onClose}
-        >
-          <X />
+      <EditorReady>
+        <Button variant="ghost" className="inspector-back" onClick={onClose}>
+          <ArrowLeft />
+          Back to files
         </Button>
-      </div>
-      <div className="form-stack">
-        <ResourceSummary
-          url={item.url}
-          title={item.title}
-          state={
-            item.uploadState === "ready"
-              ? item.displayState
-              : (item.uploadState ?? "pending")
-          }
-        />
-        <EditorActions dirty={editor.dirty} pending={mutation.pending}>
-          {item.uploadState === "ready" && item.state !== "active" && (
-            <Button
-              disabled={mutation.pending}
-              onClick={() => void save("active")}
-            >
-              {editor.dirty ? "Save and publish" : "Publish file"}
-            </Button>
-          )}
+        <div className="inspector-top">
+          <h2 data-editor-heading tabIndex={-1}>
+            {item.title}
+          </h2>
           <Button
-            variant={
-              item.state === "active" && editor.dirty ? "default" : "outline"
-            }
-            disabled={mutation.pending || !editor.dirty}
-            onClick={() => void save(item.state)}
+            size="icon"
+            variant="ghost"
+            aria-label="Close editor"
+            onClick={onClose}
           >
-            Save changes
+            <X />
           </Button>
-          {item.state === "active" && (
-            <Button
-              variant="outline"
-              disabled={mutation.pending}
-              onClick={() => void pause()}
-            >
-              Pause sharing
-            </Button>
-          )}
-        </EditorActions>
-        <MutationFeedback
-          {...mutation}
-          onReauthenticated={() => mutation.setError(null)}
-        />
-        <ConflictRecovery
-          error={mutation.error}
-          draft={form}
-          loadLatest={() => api<ResourceDto>(`/api/admin/files/${item.id}`)}
-          onUseLatest={editor.reset}
-        />
-        <FormField
-          id="title"
-          label="Title"
-          error={mutation.error?.fields?.title}
-        >
-          <Input
-            {...fieldProps("title", mutation.error?.fields)}
-            value={form.title}
-            maxLength={160}
-            onChange={(e) => setForm({ ...form, title: e.target.value })}
-          />
-        </FormField>
-        <p className="muted break-all">
-          {item.filename} · {formatBytes(item.bytes ?? 0)}
-        </p>
-        {item.previewable && item.uploadState === "ready" && (
-          <Image
-            unoptimized
-            src={`/api/admin/files/${item.id}/preview`}
-            alt={item.title}
-            width={320}
-            height={240}
-            className="h-auto max-h-64 w-full object-contain"
-          />
-        )}
-        <ExpiryField
-          value={form.expiresAt}
-          onChange={(value) => setForm({ ...form, expiresAt: value })}
-          error={mutation.error?.fields?.expiresAt}
-        />
-        {item.uploadState !== "ready" && (
-          <p className="muted">
-            Upload incomplete. Retry the upload or delete this file.
-          </p>
-        )}
-        <div className="form-actions border-t pt-5">
-          {item.uploadState === "ready" && (
-            <Button asChild variant="outline">
-              <a href={`/api/admin/files/${item.id}/download`} download>
-                Download
-              </a>
-            </Button>
-          )}
-          <DeleteButton
+        </div>
+        <div className="form-stack">
+          <ResourceSummary
+            url={item.url}
             title={item.title}
-            pending={mutation.pending}
-            onDelete={() =>
-              void mutation.run(async () => {
-                await api(`/api/admin/files/${item.id}`, "DELETE", {
-                  expectedRevision: item.revision,
-                });
-                onDeleted();
-              })
+            state={
+              item.uploadState === "ready"
+                ? item.displayState
+                : (item.uploadState ?? "pending")
             }
           />
+          <EditorActions dirty={editor.dirty} pending={mutation.pending}>
+            {item.uploadState === "ready" && item.state !== "active" && (
+              <Button
+                disabled={mutation.pending}
+                onClick={() => void save("active")}
+              >
+                {editor.dirty ? "Save and publish" : "Publish file"}
+              </Button>
+            )}
+            <Button
+              variant={
+                item.state === "active" && editor.dirty ? "default" : "outline"
+              }
+              disabled={mutation.pending || !editor.dirty}
+              onClick={() => void save(item.state)}
+            >
+              Save changes
+            </Button>
+            {item.state === "active" && (
+              <Button
+                variant="outline"
+                disabled={mutation.pending}
+                onClick={() => void pause()}
+              >
+                Pause sharing
+              </Button>
+            )}
+          </EditorActions>
+          <MutationFeedback
+            {...mutation}
+            onReauthenticated={() => mutation.setError(null)}
+          />
+          <ConflictRecovery
+            error={mutation.error}
+            draft={form}
+            loadLatest={() => api<ResourceDto>(`/api/admin/files/${item.id}`)}
+            onUseLatest={editor.reset}
+          />
+          <FormField
+            id="title"
+            label="Title"
+            error={mutation.error?.fields?.title}
+          >
+            <Input
+              {...fieldProps("title", mutation.error?.fields)}
+              value={form.title}
+              maxLength={160}
+              onChange={(e) => setForm({ ...form, title: e.target.value })}
+            />
+          </FormField>
+          <p className="muted break-all">
+            {item.filename} · {formatBytes(item.bytes ?? 0)}
+          </p>
+          {item.previewable && item.uploadState === "ready" && (
+            <Image
+              unoptimized
+              src={`/api/admin/files/${item.id}/preview`}
+              alt={item.title}
+              width={320}
+              height={240}
+              className="h-auto max-h-64 w-full object-contain"
+            />
+          )}
+          <ExpiryField
+            value={form.expiresAt}
+            onChange={(value) => setForm({ ...form, expiresAt: value })}
+            error={mutation.error?.fields?.expiresAt}
+          />
+          {item.uploadState !== "ready" && (
+            <p className="muted">
+              Upload incomplete. Retry the upload or delete this file.
+            </p>
+          )}
+          <div className="form-actions border-t pt-5">
+            {item.uploadState === "ready" && (
+              <Button asChild variant="outline">
+                <a href={`/api/admin/files/${item.id}/download`} download>
+                  Download
+                </a>
+              </Button>
+            )}
+            <DeleteButton
+              title={item.title}
+              pending={mutation.pending}
+              onDelete={() =>
+                void mutation.run(async () => {
+                  await api(`/api/admin/files/${item.id}`, "DELETE", {
+                    expectedRevision: item.revision,
+                  });
+                  onDeleted();
+                })
+              }
+            />
+          </div>
         </div>
-      </div>
+      </EditorReady>
     </aside>
   );
 }
