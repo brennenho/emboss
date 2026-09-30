@@ -29,7 +29,7 @@ const conflict = () =>
   new AppError(
     409,
     "CONFLICT",
-    "Changed in another tab. Reload before saving.",
+    "Changed in another tab. Review the latest version before continuing.",
   );
 function baseDto(env: Env, row: typeof resources.$inferSelect) {
   return {

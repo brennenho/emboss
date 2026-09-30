@@ -20,7 +20,7 @@ const conflict = () =>
   new AppError(
     409,
     "CONFLICT",
-    "Changed in another tab. Reload before saving.",
+    "Changed in another tab. Review the latest version before continuing.",
   );
 export async function readScheduling(env: Env): Promise<SchedulingData> {
   const row = await database(env).select().from(scheduling).get();
