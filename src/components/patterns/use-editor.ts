@@ -46,5 +46,9 @@ export function useEditor<R extends { revision: number }, F extends object>(
       }));
     return saved;
   }
-  return { ...state, setForm, dirty, go, mutation, save };
+  function reset(record: R) {
+    setState({ saved: record, form: fields(record) });
+    mutation.setError(null);
+  }
+  return { ...state, setForm, dirty, go, mutation, save, reset };
 }
