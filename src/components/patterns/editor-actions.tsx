@@ -12,7 +12,7 @@ export function EditorActions({
   isNew?: boolean;
 }) {
   return (
-    <div className="editor-actions">
+    <div className="editor-actions" data-pending={pending || undefined}>
       <div className="form-actions">{children}</div>
       <p className="editor-status" role="status" aria-live="polite">
         {pending

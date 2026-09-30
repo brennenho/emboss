@@ -3,6 +3,7 @@ import { useState } from "react";
 import { Search } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { statusLabel } from "./resource-controls";
 import {
   Select,
   SelectContent,
@@ -64,9 +65,7 @@ export function ResourceToolbar({
           <SelectContent>
             {["all", "active", "draft", "disabled", "expired"].map((value) => (
               <SelectItem key={value} value={value}>
-                {value === "all"
-                  ? "All states"
-                  : value[0]!.toUpperCase() + value.slice(1)}
+                {value === "all" ? "All states" : statusLabel(value)}
               </SelectItem>
             ))}
           </SelectContent>

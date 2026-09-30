@@ -14,6 +14,8 @@ import {
   ChevronUp,
   LogOut,
   X,
+  Trash2,
+  LockKeyhole,
 } from "lucide-react";
 import {
   Sidebar,
@@ -112,6 +114,18 @@ function Navigation({
       <SidebarFooter className="gap-3 px-3 pb-5">
         <SidebarMenu>
           <SidebarMenuItem>
+            <SidebarMenuButton asChild isActive={pathname === "/admin/trash"}>
+              <Link
+                href="/admin/trash"
+                aria-current={pathname === "/admin/trash" ? "page" : undefined}
+                onClick={() => setOpenMobile(false)}
+              >
+                <Trash2 />
+                <span>Trash</span>
+              </Link>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
             <SidebarMenuButton
               asChild
               isActive={pathname === "/admin/settings"}
@@ -179,11 +193,13 @@ export function AppShell({
   host,
   label,
   expiresAt,
+  readOnly = false,
 }: {
   children: React.ReactNode;
   host: string;
   label: string;
   expiresAt: string;
+  readOnly?: boolean;
 }) {
   useEffect(() => {
     const restore = (event: PageTransitionEvent) => {
@@ -191,6 +207,30 @@ export function AppShell({
     };
     window.addEventListener("pageshow", restore);
     return () => window.removeEventListener("pageshow", restore);
+  }, []);
+  useEffect(() => {
+    const viewport = window.visualViewport;
+    if (!viewport) return;
+    const update = () => {
+      const editing = document.activeElement?.matches(
+        "input, textarea, [contenteditable='true']",
+      );
+      const keyboardOpen =
+        editing && window.innerHeight - viewport.height > 120;
+      document.documentElement.toggleAttribute(
+        "data-keyboard-open",
+        !!keyboardOpen,
+      );
+    };
+    viewport.addEventListener("resize", update);
+    document.addEventListener("focusin", update);
+    document.addEventListener("focusout", update);
+    return () => {
+      viewport.removeEventListener("resize", update);
+      document.removeEventListener("focusin", update);
+      document.removeEventListener("focusout", update);
+      document.documentElement.removeAttribute("data-keyboard-open");
+    };
   }, []);
   return (
     <NavigationGuard>
@@ -207,6 +247,15 @@ export function AppShell({
               {host}
             </span>
           </div>
+          {readOnly && (
+            <div role="status" className="maintenance-banner">
+              <LockKeyhole size={16} aria-hidden="true" />
+              <p>
+                <strong>Changes paused for maintenance.</strong> You can still
+                browse, copy links, and download files.
+              </p>
+            </div>
+          )}
           {children}
         </SidebarInset>
       </SidebarProvider>
