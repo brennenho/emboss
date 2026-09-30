@@ -46,14 +46,22 @@ export function useCollectionNavigation(kind: Collection) {
           window.scrollTo({ top: 0, behavior: "instant" });
       } else if (!item && previous) {
         const position = returnPosition.current;
-        if (!position || position.query !== query) return;
-        const row = position.id
+        if (position && position.query !== query) return;
+        const row = position?.id
           ? visibleElement(`[data-resource-id="${CSS.escape(position.id)}"]`)
-          : visibleElement(".workspace-header button");
-        row?.focus({ preventScroll: true });
-        const library = visibleElement(".paste-library");
-        if (library) library.scrollTop = position.libraryScroll;
-        window.scrollTo({ top: position.scrollY, behavior: "instant" });
+          : position
+            ? visibleElement(".workspace-header button")
+            : undefined;
+        const fallback =
+          visibleElement(
+            '.collection-pane [role="search"] input, .paste-library [role="search"] input',
+          ) ?? visibleElement(".workspace-header button");
+        (row ?? fallback)?.focus({ preventScroll: true });
+        if (position) {
+          const library = visibleElement(".paste-library");
+          if (library) library.scrollTop = position.libraryScroll;
+          window.scrollTo({ top: position.scrollY, behavior: "instant" });
+        }
       }
     });
     return () => cancelAnimationFrame(frame);
@@ -67,20 +75,19 @@ export function useCollectionNavigation(kind: Collection) {
   }
 
   function changeCollection(update: (next: URLSearchParams) => void) {
+    const destination = target((next) => {
+      next.delete("item");
+      update(next);
+    });
     go(() => {
       returnPosition.current = null;
-      router.push(
-        target((next) => {
-          next.delete("item");
-          update(next);
-        }),
-      );
-    });
+      router.push(destination);
+    }, destination);
   }
 
   function setFilter(name: string, value: string) {
     changeCollection((next) => {
-      if (value && value !== "all") next.set(name, value);
+      if (value && (name !== "state" || value !== "all")) next.set(name, value);
       else next.delete(name);
       next.delete("cursor");
       next.delete("previous");
@@ -89,6 +96,7 @@ export function useCollectionNavigation(kind: Collection) {
 
   return {
     open(id: string, onNavigate?: () => void) {
+      const destination = target((next) => next.set("item", id));
       go(() => {
         returnPosition.current = {
           id: id === "new" ? null : id,
@@ -97,19 +105,12 @@ export function useCollectionNavigation(kind: Collection) {
           query,
         };
         onNavigate?.();
-        router.push(
-          target((next) => next.set("item", id)),
-          { scroll: false },
-        );
-      });
+        router.push(destination, { scroll: false });
+      }, destination);
     },
     close() {
-      go(() =>
-        router.push(
-          target((next) => next.delete("item")),
-          { scroll: false },
-        ),
-      );
+      const destination = target((next) => next.delete("item"));
+      go(() => router.push(destination, { scroll: false }), destination);
     },
     saved(id: string) {
       router.replace(

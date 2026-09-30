@@ -19,27 +19,66 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+type GuardScope = "location" | "pathname";
+type PendingNavigation = {
+  action: () => void;
+  guards: string[];
+  hasUploads: boolean;
+  hasEdits: boolean;
+};
 const GuardContext = createContext<{
-  setDirty: (id: string, dirty: boolean) => void;
-  go: (action: () => void) => void;
+  setDirty: (id: string, dirty: boolean, scope: GuardScope) => void;
+  go: (action: () => void, destination?: string) => void;
 }>({ setDirty: () => {}, go: (action) => action() });
 export function NavigationGuard({ children }: { children: React.ReactNode }) {
-  const [next, setNext] = useState<(() => void) | null>(null);
-  const editors = useRef(new Set<string>());
-  const setDirty = useCallback((id: string, value: boolean) => {
-    if (value) editors.current.add(id);
-    else editors.current.delete(id);
-  }, []);
+  const [next, setNext] = useState<PendingNavigation | null>(null);
+  const guards = useRef(new Map<string, GuardScope>());
+  const setDirty = useCallback(
+    (id: string, value: boolean, scope: GuardScope) => {
+      if (value) guards.current.set(id, scope);
+      else guards.current.delete(id);
+    },
+    [],
+  );
   const router = useRouter();
-  const go = useCallback((action: () => void) => {
-    if (editors.current.size) setNext(() => action);
-    else action();
-  }, []);
+  const pendingNavigation = useCallback(
+    (
+      action: () => void,
+      destination?: string,
+      currentHref = window.location.href,
+    ): PendingNavigation => {
+      const current = new URL(currentHref);
+      const target = destination ? new URL(destination, current) : null;
+      const samePath =
+        target?.origin === current.origin &&
+        target.pathname === current.pathname;
+      const sameLocation = samePath && target?.search === current.search;
+      const blocking = [...guards.current].filter(([, scope]) =>
+        scope === "pathname" ? !samePath : !sameLocation,
+      );
+      return {
+        action,
+        guards: blocking.map(([id]) => id),
+        hasUploads: blocking.some(([, scope]) => scope === "pathname"),
+        hasEdits: blocking.some(([, scope]) => scope === "location"),
+      };
+    },
+    [],
+  );
+  const go = useCallback(
+    (action: () => void, destination?: string) => {
+      const navigation = pendingNavigation(action, destination);
+      if (navigation.guards.length) setNext(navigation);
+      else action();
+    },
+    [pendingNavigation],
+  );
   useEffect(() => {
     const marker = "__embossHistoryIndex";
     let index = Number(window.history.state?.[marker] ?? 0);
     let currentUrl = window.location.href;
-    let restoring: { index: number; delta: number } | null = null;
+    let restoring: { index: number; navigation: PendingNavigation } | null =
+      null;
     let disposed = false;
     let restoreHistory = () => {};
 
@@ -77,12 +116,12 @@ export function NavigationGuard({ children }: { children: React.ReactNode }) {
       };
     });
     const unload = (event: BeforeUnloadEvent) => {
-      if (!editors.current.size) return;
+      if (!guards.current.size) return;
       event.preventDefault();
       event.returnValue = "";
     };
     const click = (event: MouseEvent) => {
-      if (!editors.current.size || event.defaultPrevented || event.button !== 0)
+      if (!guards.current.size || event.defaultPrevented || event.button !== 0)
         return;
       const a =
         event.target instanceof Element ? event.target.closest("a") : null;
@@ -104,13 +143,15 @@ export function NavigationGuard({ children }: { children: React.ReactNode }) {
           url.search === window.location.search)
       )
         return;
-      event.preventDefault();
-      event.stopPropagation();
-      setNext(() => () => {
+      const navigation = pendingNavigation(() => {
         if (url.origin === window.location.origin)
           router.push(url.pathname + url.search + url.hash);
         else window.location.assign(url.href);
-      });
+      }, url.href);
+      if (!navigation.guards.length) return;
+      event.preventDefault();
+      event.stopPropagation();
+      setNext(navigation);
     };
     const pop = (event: PopStateEvent) => {
       const targetIndex = event.state?.[marker] as number | undefined;
@@ -121,26 +162,27 @@ export function NavigationGuard({ children }: { children: React.ReactNode }) {
             window.history.go(restoring.index - targetIndex);
           return;
         }
-        const { delta } = restoring;
+        const { navigation } = restoring;
         restoring = null;
-        setNext(() => () => window.history.go(delta));
+        setNext(navigation);
         return;
       }
       const target = new URL(window.location.href);
-      const previous = new URL(currentUrl);
-      const samePage =
-        target.pathname === previous.pathname &&
-        target.search === previous.search;
+      const delta = targetIndex === undefined ? 0 : targetIndex - index;
+      const navigation = pendingNavigation(
+        () => window.history.go(delta),
+        target.href,
+        currentUrl,
+      );
       if (
-        editors.current.size &&
-        !samePage &&
+        navigation.guards.length &&
         targetIndex !== undefined &&
         targetIndex !== index
       ) {
         // Stop Next's bubble listener before it can unmount the editor. Return
         // to the existing entry; do not insert duplicate history entries.
         event.stopImmediatePropagation();
-        restoring = { index, delta: targetIndex - index };
+        restoring = { index, navigation };
         window.history.go(index - targetIndex);
         return;
       }
@@ -157,7 +199,7 @@ export function NavigationGuard({ children }: { children: React.ReactNode }) {
       window.removeEventListener("popstate", pop, true);
       document.removeEventListener("click", click, true);
     };
-  }, [router]);
+  }, [router, pendingNavigation]);
 
   return (
     <GuardContext.Provider value={{ setDirty, go }}>
@@ -170,21 +212,31 @@ export function NavigationGuard({ children }: { children: React.ReactNode }) {
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Discard unsaved changes?</AlertDialogTitle>
+            <AlertDialogTitle>
+              {next?.hasUploads
+                ? next.hasEdits
+                  ? "Discard edits and leave?"
+                  : "Leave while uploading?"
+                : "Discard unsaved changes?"}
+            </AlertDialogTitle>
             <AlertDialogDescription>
-              Your edits will be lost.
+              {next?.hasEdits && "Your edits will be lost."}
+              {next?.hasEdits && next.hasUploads && " "}
+              {next?.hasUploads && "Uploads may stop if you leave this page."}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Keep editing</AlertDialogCancel>
+            <AlertDialogCancel>
+              {next?.hasEdits ? "Keep editing" : "Stay here"}
+            </AlertDialogCancel>
             <AlertDialogAction
               onClick={() => {
-                editors.current.clear();
-                next?.();
+                for (const id of next?.guards ?? []) guards.current.delete(id);
+                next?.action();
                 setNext(null);
               }}
             >
-              Discard changes
+              {next?.hasUploads ? "Leave page" : "Discard changes"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -192,13 +244,13 @@ export function NavigationGuard({ children }: { children: React.ReactNode }) {
     </GuardContext.Provider>
   );
 }
-export function useEditorGuard(dirty: boolean) {
+export function useEditorGuard(dirty: boolean, scope: GuardScope = "location") {
   const { setDirty, go } = useContext(GuardContext);
   const id = useId();
   useEffect(() => {
-    setDirty(id, dirty);
-    return () => setDirty(id, false);
-  }, [dirty, setDirty, id]);
+    setDirty(id, dirty, scope);
+    return () => setDirty(id, false, scope);
+  }, [dirty, setDirty, id, scope]);
   return go;
 }
 export function useNavigationGuard() {

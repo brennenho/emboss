@@ -71,6 +71,7 @@ export function UploadControl({
         job.cancelling ||
         ["queued", "checking"].includes(job.state),
     ),
+    "pathname",
   );
   function render() {
     setSnapshot([...jobs.current]);
