@@ -41,7 +41,12 @@ export function useCollectionNavigation(kind: Collection) {
 
     const frame = requestAnimationFrame(() => {
       if (item && item !== "new" && previous !== "new") {
-        visibleElement("[data-editor-heading]")?.focus({ preventScroll: true });
+        const heading = visibleElement("[data-editor-heading]");
+        const pane = heading?.closest(".inspector, .paste-editor");
+        // Interaction may have started before this deferred focus runs.
+        if (document.activeElement && pane?.contains(document.activeElement))
+          return;
+        heading?.focus({ preventScroll: true });
         if (window.matchMedia("(max-width: 900px)").matches)
           window.scrollTo({ top: 0, behavior: "instant" });
       } else if (!item && previous) {
