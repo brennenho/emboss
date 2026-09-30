@@ -103,6 +103,17 @@ Migration `0003_editable_link_addresses.sql` allows link addresses to change whi
 preserving the other address and kind constraints. Apply it before deploying link
 editing. It does not modify existing links or enable disabled links.
 
+Migration `0004_durable_addresses_and_trash.sql` adds permanent address ownership
+and stored recovery deadlines. Renames keep the former address as an alias unless
+the owner retires it; deletion never makes it available to unrelated content.
+For an address reused by older versions, the migration preserves its current owner
+(or its most recent deleted owner when none is current). Older conflicting items
+cannot be restored to that address. Existing deleted files keep their recorded
+object deadline; other legacy deleted items receive a deadline 30 days after
+deletion. Review these legacy cases before rollout if the installation previously
+used a different retention period. Migration `0005_maintenance_health.sql` adds
+cleanup reporting. Apply both before starting the new Worker.
+
 ## Cleanup and observability
 
 The custom Worker delegates HTTP to OpenNext and runs bounded maintenance hourly
@@ -178,9 +189,12 @@ For local emulation, stop the local servers, set the local variable true, and us
 `--local` instead. `--ack-read-only` confirms the running target has actually been
 paused; reading a config file cannot prove a remote deployment adopted it.
 
-The script exports D1 SQL, copies every ready/retained stored R2 object, validates
-sizes, and writes a versioned manifest with SHA-256 checksums and non-secret
-configuration. A manifest appears only after all copies succeed. Finally restore
+The script exports D1 SQL, copies every ready or recoverable retained R2 object,
+validates sizes, and writes a versioned manifest with SHA-256 checksums and non-secret
+configuration. Objects already claimed for irreversible deletion are excluded.
+The SQL recreates triggers after importing data, preserving address records and
+historical tombstones without firing creation triggers during the import. A
+manifest appears only after all copies succeed. Finally restore
 `READ_ONLY_MODE=false` and apply/restart the running target. Keep multiple dated
 copies according to your retention policy. D1 recovery history alone cannot
 recover purged R2 objects.
@@ -203,7 +217,7 @@ and bucket name and select `--local`. Keep the config and state private.
 Restore verifies input checksums, refuses the source resource IDs and existing
 application tables, imports SQL, immediately clears restored sessions and changes
 the auth generation, uploads objects, and downloads them again to verify hashes.
-It checks ready-object references and expires old upload attempts. Then it invokes
+It checks ready and recoverable retained object references, then expires old upload attempts. Then it invokes
 the password operator workflow against the **new configuration**, synchronizing
 D1 with the intended new Worker secret. Remote password installation requires an
 existing unserved target Worker; deploy that new target without routes first.
@@ -214,6 +228,51 @@ not switch the domain until restored content, files, password rotation, old-sess
 rejection, and scheduled cleanup pass smoke tests. Apply any subsequent reviewed
 migrations, disable read-only mode, then switch the route. Protect or remove failed
 rehearsal resources and temporary backups when no longer needed.
+
+## Local recovery rehearsal · September 30, 2026
+
+The actual `backup.ts` and `restore.ts` scripts completed against separate local
+D1 databases and R2 buckets using migrations `0000` through `0005` and the backup
+trigger-order fix in `cc29775`. Source and target configurations, fixture passwords,
+and local persistence were isolated under a disposable `/tmp` directory. The
+source was in read-only mode during export; the target remained read-only until
+initial verification passed. The normal development database and secret file were
+not used.
+
+The commands used explicit local targets:
+
+```sh
+pnpm exec tsx scripts/backup.ts --local --config /tmp/rehearsal/source/wrangler.jsonc \
+  --directory /tmp/rehearsal/backup --ack-read-only
+pnpm exec tsx scripts/restore.ts --local --config /tmp/rehearsal/target/wrangler.jsonc \
+  --directory /tmp/rehearsal/backup --ack-new-resources --fixture
+```
+
+The paths above stand for the temporary directories used in the run. `--fixture`
+was used only with `--local`. Four objects totaling **196,676 bytes** were copied,
+restored, downloaded again, and checked against SHA-256 hashes. Fixtures included
+live and expired files, a retained file and paste, a permanently deleted file, a
+card portrait and card links, an active old-address alias, a retired address, and
+an authenticated source session.
+
+A local Worker harness using the application’s domain, authentication, download,
+and maintenance functions verified:
+
+- The old session was rejected and the newly provisioned fixture password signed in.
+- Read-only mode rejected content writes and skipped cleanup/status writes.
+- The active alias and retired address kept their behavior and remained reserved.
+- Retained items remained recoverable; the permanent item did not return to Trash.
+- Card/portrait relations survived and a 65,536-byte binary download matched exactly.
+- After enabling the isolated target, file restoration returned a paused item.
+- Cleanup completed without failures, finished the permanent deletion, and preserved
+  both the live file and the expired file. The local scheduled endpoint also returned
+  `outcome: "ok"`.
+- A repeated restore refused the target’s existing application tables before importing.
+
+This establishes a local recovery path for the exercised schema and fixtures. It
+does not verify remote Cloudflare permissions, hosted Cron delivery, domain/TLS
+configuration, large-object performance, or a production disaster recovery run.
+The disposable fixture state and backups were removed after verification.
 
 ## Release checks requiring a real deployment
 
