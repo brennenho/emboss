@@ -99,12 +99,20 @@ try {
       throw new Error(`Restored object checksum mismatch: ${object.id}`);
     await rm(checkPath);
   }
+  // Older version-1 backups predate explicit purge claims. Their retained
+  // objects are all required; current backups may omit irreversible purges.
+  const blobColumns = await query<{ name: string }>("PRAGMA table_info(blobs)");
+  const purgeGuard = blobColumns.some(({ name }) => name === "purge_started_at")
+    ? " AND purge_started_at IS NULL"
+    : "";
   const refs = await query<{ id: string }>(
-    "SELECT b.id FROM blobs b WHERE b.state='ready' AND b.stored_bytes>0",
+    `SELECT id FROM blobs WHERE (state='ready' OR (state='pending_delete'${purgeGuard})) AND stored_bytes>0`,
   );
   const ids = new Set(manifest.objects.map((o) => o.id));
   if (refs.some((row) => !ids.has(row.id)))
-    throw new Error("A ready object is missing from the backup manifest.");
+    throw new Error(
+      "A live or recoverable object is missing from the backup manifest.",
+    );
   // No in-flight upload can resume against the new Worker.
   await query(
     "UPDATE blobs SET state='pending_delete',purge_after=CAST(unixepoch('subsec')*1000 AS INTEGER) WHERE state IN ('reserved','uploading'); DELETE FROM idempotency_keys;",

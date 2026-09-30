@@ -58,10 +58,32 @@ await wrangler([
   "--output",
   dataPath,
 ]);
-await copyFile(schemaPath, join(root, "database.sql"));
+const triggers = await query<{ name: string; sql: string }>(
+  "SELECT name,sql FROM sqlite_master WHERE type='trigger' AND sql IS NOT NULL ORDER BY name",
+);
+const databasePath = join(root, "database.sql");
+await copyFile(schemaPath, databasePath);
+// Reservation triggers protect live writes, but replaying a dump must preserve
+// its address rows exactly, including aliases and historical duplicate slugs.
+await writeFile(
+  databasePath,
+  "\n" +
+    triggers
+      .map(
+        ({ name }) => `DROP TRIGGER IF EXISTS "${name.replaceAll('"', '""')}";`,
+      )
+      .join("\n") +
+    "\n",
+  { flag: "a" },
+);
 await pipeline(
   createReadStream(dataPath),
   createWriteStream(join(root, "database.sql"), { flags: "a", mode: 0o600 }),
+);
+await writeFile(
+  databasePath,
+  "\n" + triggers.map(({ sql }) => `${sql};`).join("\n") + "\n",
+  { flag: "a" },
 );
 await rm(schemaPath);
 await rm(dataPath);
@@ -80,7 +102,7 @@ for (;;) {
     state: string;
     stored_bytes: number;
   }>(
-    `SELECT id,object_key,expected_bytes,state,stored_bytes FROM blobs WHERE state IN ('ready','pending_delete') AND stored_bytes>0 AND id>'${cursor}' ORDER BY id LIMIT 100`,
+    `SELECT id,object_key,expected_bytes,state,stored_bytes FROM blobs WHERE (state='ready' OR (state='pending_delete' AND purge_started_at IS NULL)) AND stored_bytes>0 AND id>'${cursor}' ORDER BY id LIMIT 100`,
   );
   if (!rows.length) break;
   for (const row of rows) {
