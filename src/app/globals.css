@@ -949,6 +949,10 @@
     max-height: 70dvh;
     object-fit: contain;
   }
+  section.file-preview {
+    min-height: 0;
+    align-content: start;
+  }
   .file-preview pre {
     width: 100%;
     padding: 24px;
@@ -1069,7 +1073,8 @@
     display: inline-flex;
     margin-bottom: 14px;
   }
-  .inspector-close {
+  .inspector-close,
+  .inspector-top > [aria-label="Close editor"] {
     display: none;
   }
   .workspace-header[data-editing="true"] .workspace-new-action {
@@ -1091,6 +1096,18 @@
   }
 }
 @media (max-width: 767px) {
+  html {
+    scroll-padding-top: 136px;
+    scroll-padding-bottom: calc(120px + env(safe-area-inset-bottom));
+  }
+  .paste-body,
+  .editor-surface {
+    scroll-margin-block: 136px 128px;
+  }
+  .paste-editor:has(.paste-body:focus, .cm-editor.cm-focused) .editor-actions {
+    position: static;
+    box-shadow: none;
+  }
   .maintenance-banner {
     padding: 12px 16px;
   }
