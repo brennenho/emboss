@@ -1,4 +1,5 @@
 "use client";
+import { EditorReady } from "@/components/patterns/editor-ready";
 import { useRef, useState } from "react";
 import { Upload, X, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -277,138 +278,141 @@ export function UploadControl({
     pump();
   }
   return (
-    <div className="form-stack">
-      <div
-        className={`flex flex-wrap items-center justify-between gap-4 border border-dashed p-5 ${drag ? "bg-accent border-primary" : "bg-card border-input"}`}
-        onDragOver={(e) => {
-          e.preventDefault();
-          setDrag(true);
-        }}
-        onDragLeave={() => setDrag(false)}
-        onDrop={(e) => {
-          e.preventDefault();
-          setDrag(false);
-          add(e.dataTransfer.files);
-        }}
-      >
-        <div>
-          <p className="font-medium">
-            {avatar ? "Drop an image here" : "Drop files here"}
-          </p>
-          <p className="muted">
-            {avatar ? "PNG, JPEG, or WebP · " : ""}Up to {formatBytes(maxBytes)}
-            {avatar ? "" : " per file"}
-          </p>
-          {!avatar && availableBytes !== undefined && (
-            <p className="muted">{formatBytes(availableBytes)} available</p>
-          )}
-        </div>
-        <input
-          ref={input}
-          type="file"
-          multiple={!avatar}
-          accept={avatar ? "image/png,image/jpeg,image/webp" : undefined}
-          className="sr-only"
-          tabIndex={-1}
-          aria-label={avatar ? "Avatar file" : "Files to upload"}
-          onChange={(e) => {
-            add(e.target.files);
-            e.target.value = "";
+    <EditorReady>
+      <div className="form-stack">
+        <div
+          className={`flex flex-wrap items-center justify-between gap-4 border border-dashed p-5 ${drag ? "bg-accent border-primary" : "bg-card border-input"}`}
+          onDragOver={(e) => {
+            e.preventDefault();
+            setDrag(true);
           }}
-        />
-        <Button
-          type="button"
-          variant="outline"
-          onClick={() => input.current?.click()}
+          onDragLeave={() => setDrag(false)}
+          onDrop={(e) => {
+            e.preventDefault();
+            setDrag(false);
+            add(e.dataTransfer.files);
+          }}
         >
-          <Upload />
-          {avatar ? "Choose image" : "Choose files"}
-        </Button>
-      </div>
-      <MutationFeedback
-        error={error}
-        onReauthenticated={() => setError(null)}
-      />
-      {snapshot.map((job) => {
-        const resource = job.result?.resource;
-        return (
-          <div
-            className="upload-job border-b pb-3"
-            data-state={job.state}
-            key={job.id}
+          <div>
+            <p className="font-medium">
+              {avatar ? "Drop an image here" : "Drop files here"}
+            </p>
+            <p className="muted">
+              {avatar ? "PNG, JPEG, or WebP · " : ""}Up to{" "}
+              {formatBytes(maxBytes)}
+              {avatar ? "" : " per file"}
+            </p>
+            {!avatar && availableBytes !== undefined && (
+              <p className="muted">{formatBytes(availableBytes)} available</p>
+            )}
+          </div>
+          <input
+            ref={input}
+            type="file"
+            multiple={!avatar}
+            accept={avatar ? "image/png,image/jpeg,image/webp" : undefined}
+            className="sr-only"
+            tabIndex={-1}
+            aria-label={avatar ? "Avatar file" : "Files to upload"}
+            onChange={(e) => {
+              add(e.target.files);
+              e.target.value = "";
+            }}
+          />
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => input.current?.click()}
           >
-            <div className="upload-job-top flex flex-wrap items-center justify-between gap-3">
-              <div className="min-w-0 flex-1">
-                <p className="text-sm break-all">{job.file.name}</p>
-                <p className="muted">{formatBytes(job.file.size)}</p>
+            <Upload />
+            {avatar ? "Choose image" : "Choose files"}
+          </Button>
+        </div>
+        <MutationFeedback
+          error={error}
+          onReauthenticated={() => setError(null)}
+        />
+        {snapshot.map((job) => {
+          const resource = job.result?.resource;
+          return (
+            <div
+              className="upload-job border-b pb-3"
+              data-state={job.state}
+              key={job.id}
+            >
+              <div className="upload-job-top flex flex-wrap items-center justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm break-all">{job.file.name}</p>
+                  <p className="muted">{formatBytes(job.file.size)}</p>
+                </div>
+                <span className="muted shrink-0" role="status">
+                  {uploadStatus(job, avatar)}
+                </span>
+                {["queued", "uploading"].includes(job.state) && (
+                  <Button
+                    type="button"
+                    size="icon"
+                    variant="ghost"
+                    aria-label={`Cancel ${job.file.name}`}
+                    onClick={() => void cancel(job)}
+                  >
+                    <X />
+                  </Button>
+                )}
+                {job.state === "complete" && (
+                  <Button
+                    type="button"
+                    size="icon"
+                    variant="ghost"
+                    aria-label={`Dismiss ${job.file.name}`}
+                    onClick={() => dismiss(job)}
+                  >
+                    <X />
+                  </Button>
+                )}
+                {["failed", "cancelled"].includes(job.state) && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={job.running || job.cancelling}
+                    onClick={() => void retry(job)}
+                  >
+                    <RotateCcw />
+                    Retry
+                  </Button>
+                )}
               </div>
-              <span className="muted shrink-0" role="status">
-                {uploadStatus(job, avatar)}
-              </span>
-              {["queued", "uploading"].includes(job.state) && (
-                <Button
-                  type="button"
-                  size="icon"
-                  variant="ghost"
-                  aria-label={`Cancel ${job.file.name}`}
-                  onClick={() => void cancel(job)}
-                >
-                  <X />
-                </Button>
-              )}
-              {job.state === "complete" && (
-                <Button
-                  type="button"
-                  size="icon"
-                  variant="ghost"
-                  aria-label={`Dismiss ${job.file.name}`}
-                  onClick={() => dismiss(job)}
-                >
-                  <X />
-                </Button>
-              )}
-              {["failed", "cancelled"].includes(job.state) && (
+              {job.state === "complete" && resource && onReview && (
                 <Button
                   type="button"
                   variant="outline"
-                  disabled={job.running || job.cancelling}
-                  onClick={() => void retry(job)}
+                  className="upload-result-action mt-3"
+                  onClick={() => {
+                    onReview(resource);
+                    dismiss(job);
+                  }}
                 >
-                  <RotateCcw />
-                  Retry
+                  Review and publish
                 </Button>
               )}
-            </div>
-            {job.state === "complete" && resource && onReview && (
-              <Button
-                type="button"
-                variant="outline"
-                className="upload-result-action mt-3"
-                onClick={() => {
-                  onReview(resource);
-                  dismiss(job);
+              {job.state === "uploading" && (
+                <Progress
+                  value={job.progress}
+                  aria-label={`${job.file.name} upload progress`}
+                  className="mt-2"
+                />
+              )}
+              <MutationFeedback
+                error={job.error}
+                onReauthenticated={() => {
+                  job.error = null;
+                  render();
                 }}
-              >
-                Review and publish
-              </Button>
-            )}
-            {job.state === "uploading" && (
-              <Progress
-                value={job.progress}
-                aria-label={`${job.file.name} upload progress`}
-                className="mt-2"
               />
-            )}
-            <MutationFeedback
-              error={job.error}
-              onReauthenticated={() => {
-                job.error = null;
-                render();
-              }}
-            />
-          </div>
-        );
-      })}
-    </div>
+            </div>
+          );
+        })}
+      </div>
+    </EditorReady>
   );
 }

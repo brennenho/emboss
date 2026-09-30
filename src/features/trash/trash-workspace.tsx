@@ -1,4 +1,5 @@
 "use client";
+import { EditorReady } from "@/components/patterns/editor-ready";
 import { useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -87,7 +88,7 @@ export function TrashWorkspace({
     });
   }
   return (
-    <>
+    <EditorReady>
       <header className="workspace-header">
         <div>
           <h1 ref={heading} tabIndex={-1}>
@@ -303,6 +304,6 @@ export function TrashWorkspace({
           in their library and are never removed just because they expire.
         </p>
       </div>
-    </>
+    </EditorReady>
   );
 }
