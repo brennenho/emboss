@@ -95,3 +95,41 @@ export async function ownerConfiguration(
   const { readScheduling, readCard } = await import("./configuration-store");
   return kind === "scheduling" ? readScheduling(env) : readCard(env);
 }
+
+export async function ownerTrash(
+  query: Record<string, unknown>,
+  request?: Request,
+) {
+  const { env } = await ownerContext(request);
+  return store.listTrashResources(env, query);
+}
+export async function ownerRestore(
+  kind: ResourceKind,
+  id: string,
+  input: unknown,
+  request: Request,
+) {
+  const { env } = await ownerContext(request);
+  await checkWrite(env);
+  return store.restoreResource(
+    env,
+    kind,
+    id,
+    revisionSchema.parse(input).expectedRevision,
+  );
+}
+export async function ownerPermanentlyDelete(
+  kind: ResourceKind,
+  id: string,
+  input: unknown,
+  request: Request,
+) {
+  const { env } = await ownerContext(request);
+  await checkWrite(env);
+  return store.purgeResourceContent(
+    env,
+    id,
+    kind,
+    revisionSchema.parse(input).expectedRevision,
+  );
+}

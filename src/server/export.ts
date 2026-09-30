@@ -4,6 +4,7 @@ import { privateHeaders } from "./http";
 const tables = [
   "installation",
   "resources",
+  "resource_addresses",
   "links",
   "pastes",
   "files",

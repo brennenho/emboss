@@ -12,6 +12,9 @@ import {
   publicResource,
   publicLink,
   updateResource,
+  listTrashResources,
+  restoreResource,
+  purgeResourceContent,
 } from "../../src/server/resource-store";
 import {
   available,
@@ -36,39 +39,32 @@ const input = (slug: string) => ({
   destinationUrl: "https://example.org/start?stored=1",
 });
 describe("stable resource lifecycle and atomic writes", () => {
-  it("creates live links and only revives legacy disabled links on an explicit save", async () => {
+  it("creates live links and pauses without editing their saved content", async () => {
     const parsed = linkSchema.parse({ destinationUrl: "https://example.org" });
     expect(parsed.state).toBe("active");
     for (const state of ["draft", "disabled"])
       expect(linkSchema.safeParse({ ...parsed, state }).success).toBe(false);
     const item = await createResource(env, "link", parsed, crypto.randomUUID());
-    await expect(
-      changeResourceState(env, "link", item.id, {
-        state: "disabled",
-        expectedRevision: item.revision,
-      }),
-    ).rejects.toMatchObject({ status: 404 });
-    await expect(
-      updateResource(env, "link", item.id, {
-        ...parsed,
-        state: "disabled",
-        expectedRevision: item.revision,
-      }),
-    ).rejects.toMatchObject({ status: 400 });
-    // Existing installations may contain links disabled before the simpler lifecycle.
-    await env.DB.prepare("UPDATE resources SET state='disabled' WHERE id=?")
-      .bind(item.id)
-      .run();
-    expect((await getResource(env, "link", item.id)).state).toBe("disabled");
+    const paused = await changeResourceState(env, "link", item.id, {
+      state: "disabled",
+      expectedRevision: item.revision,
+    });
+    expect(paused.destinationUrl).toBe(item.destinationUrl);
     expect(await publicLink(env, item.slug)).toBeNull();
     const saved = await updateResource(env, "link", item.id, {
       ...parsed,
-      expectedRevision: item.revision,
+      state: "disabled",
+      expectedRevision: paused.revision,
     });
-    expect(saved.state).toBe("active");
+    expect(saved.state).toBe("disabled");
+    const resumed = await changeResourceState(env, "link", item.id, {
+      state: "active",
+      expectedRevision: saved.revision,
+    });
+    expect(resumed.state).toBe("active");
     expect(await publicLink(env, item.slug)).toBe(parsed.destinationUrl);
   });
-  it("renames links atomically, releases the old address, and rejects stale edits", async () => {
+  it("renames links atomically, keeps the old alias, and rejects stale edits", async () => {
     const key = crypto.randomUUID();
     const item = await createResource(env, "link", input("rename-before"), key);
     const saved = await updateResource(
@@ -86,18 +82,15 @@ describe("stable resource lifecycle and atomic writes", () => {
       revision: 2,
       url: "http://localhost:3000/rename-after",
     });
-    expect(await publicLink(env, item.slug)).toBeNull();
+    expect(await publicLink(env, item.slug)).toBe(saved.destinationUrl);
+    expect(saved.aliases).toEqual([item.slug]);
     expect(await publicLink(env, saved.slug)).toBe(saved.destinationUrl);
     expect(
       (await createResource(env, "link", input("rename-before"), key)).slug,
     ).toBe(saved.slug);
-    const replacement = await createResource(
-      env,
-      "link",
-      input(item.slug),
-      crypto.randomUUID(),
-    );
-    expect(await publicLink(env, item.slug)).toBe(replacement.destinationUrl);
+    await expect(
+      createResource(env, "link", input(item.slug), crypto.randomUUID()),
+    ).rejects.toMatchObject({ code: "SLUG_TAKEN" });
     await expect(
       updateResource(env, "link", item.id, {
         ...input("stale-rename"),
@@ -259,49 +252,71 @@ describe("stable resource lifecycle and atomic writes", () => {
     await deleteResource(env, "link", resource.id, changed.revision);
     expect(await publicResource(env, "link", "edits")).toBeNull();
   });
-  it("releases deleted addresses and resolves only the replacement under concurrent reuse", async () => {
+  it("reserves deleted addresses under concurrent attempts and after permanent deletion", async () => {
     const key = crypto.randomUUID();
-    const original = await createResource(env, "link", input("reusable"), key);
-    await deleteResource(env, "link", original.id, original.revision);
-    expect(await publicLink(env, "reusable")).toBeNull();
-    const results = await Promise.allSettled([
-      createResource(
-        env,
-        "link",
-        {
-          ...input("reusable"),
-          destinationUrl: "https://example.org/replacement",
-        },
-        crypto.randomUUID(),
-      ),
-      createResource(
-        env,
-        "link",
-        {
-          ...input("reusable"),
-          destinationUrl: "https://example.net/replacement",
-        },
-        crypto.randomUUID(),
-      ),
-    ]);
-    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
-    const winner = results.find((r) => r.status === "fulfilled")!;
-    if (winner.status !== "fulfilled")
-      throw new Error("No replacement created");
-    expect(winner.value.id).not.toBe(original.id);
-    expect((await publicResource(env, "link", "reusable"))?.id).toBe(
-      winner.value.id,
+    const original = await createResource(
+      env,
+      "link",
+      input("reserved-deleted"),
+      key,
     );
-    expect(await publicLink(env, "reusable")).toBe(winner.value.destinationUrl);
+    await deleteResource(env, "link", original.id, original.revision);
+    expect(await publicLink(env, original.slug)).toBeNull();
+    const results = await Promise.allSettled([
+      createResource(env, "link", input(original.slug), crypto.randomUUID()),
+      createResource(env, "link", input(original.slug), crypto.randomUUID()),
+    ]);
+    expect(results.every((result) => result.status === "rejected")).toBe(true);
+    await purgeResourceContent(env, original.id, "link", original.revision + 1);
     await expect(
-      createResource(env, "link", input("reusable"), key),
+      createResource(env, "link", input(original.slug), crypto.randomUUID()),
+    ).rejects.toMatchObject({ code: "SLUG_TAKEN" });
+    await expect(
+      createResource(env, "link", input(original.slug), key),
     ).rejects.toMatchObject({ status: 404 });
-    await expect(
-      deleteResource(env, "link", original.id, original.revision),
-    ).rejects.toMatchObject({ status: 409 });
-    expect(await publicLink(env, "reusable")).toBe(winner.value.destinationUrl);
   });
-  it("keeps legacy disabled and expired addresses allocated until deletion", async () => {
+  it("retires an old address only when requested, while reserving it permanently", async () => {
+    const original = await createResource(
+      env,
+      "link",
+      input("retire-before"),
+      crypto.randomUUID(),
+    );
+    const renamed = await updateResource(env, "link", original.id, {
+      ...input("retire-after"),
+      previousAddress: "retire",
+      expectedRevision: original.revision,
+    });
+    expect(await publicLink(env, original.slug)).toBeNull();
+    expect(renamed.aliases).toEqual([]);
+    await expect(
+      createResource(env, "link", input(original.slug), crypto.randomUUID()),
+    ).rejects.toMatchObject({ code: "SLUG_TAKEN" });
+  });
+  it("prevents redirect loops through a saved alias", async () => {
+    const original = await createResource(
+      env,
+      "link",
+      input("alias-loop-before"),
+      crypto.randomUUID(),
+    );
+    const renamed = await updateResource(env, "link", original.id, {
+      ...input("alias-loop-after"),
+      expectedRevision: original.revision,
+    });
+    await expect(
+      updateResource(env, "link", original.id, {
+        ...input(renamed.slug),
+        destinationUrl: original.url.replace(
+          "alias-loop-before",
+          "%61lias-loop-before",
+        ),
+        expectedRevision: renamed.revision,
+      }),
+    ).rejects.toMatchObject({ code: "VALIDATION" });
+    expect(await publicLink(env, original.slug)).toBe(renamed.destinationUrl);
+  });
+  it("keeps paused and expired addresses allocated", async () => {
     for (const state of ["disabled", "active"] as const) {
       const item = await createResource(
         env,
@@ -548,5 +563,153 @@ describe("independent visibility and bounded list reads", () => {
         item.destinationUrl?.includes("example.org/start"),
       ),
     ).toBe(true);
+  });
+});
+
+describe("recoverable Trash", () => {
+  it("restores content and aliases paused, with a new revision and the same address", async () => {
+    const created = await createResource(
+      env,
+      "link",
+      input("restore-old-alias"),
+      crypto.randomUUID(),
+    );
+    const renamed = await updateResource(env, "link", created.id, {
+      ...input("restore-main"),
+      expectedRevision: created.revision,
+    });
+    await deleteResource(env, "link", renamed.id, renamed.revision);
+    const trash = await listTrashResources(env, { q: renamed.slug });
+    expect(trash.items).toHaveLength(1);
+    const deleted = trash.items[0]!;
+    expect(deleted).toMatchObject({
+      id: renamed.id,
+      canRestore: true,
+      revision: renamed.revision + 1,
+    });
+    expect(Date.parse(deleted.purgeAfter)).toBeGreaterThan(
+      Date.parse(deleted.deletedAt),
+    );
+    const restored = await restoreResource(
+      env,
+      "link",
+      renamed.id,
+      deleted.revision,
+    );
+    expect(restored).toMatchObject({
+      slug: renamed.slug,
+      state: "disabled",
+      destinationUrl: renamed.destinationUrl,
+      aliases: [created.slug],
+      revision: deleted.revision + 1,
+    });
+    expect(await publicLink(env, created.slug)).toBeNull();
+    expect(await publicLink(env, renamed.slug)).toBeNull();
+    expect(
+      (await listTrashResources(env, { q: renamed.slug })).items,
+    ).toHaveLength(0);
+    await changeResourceState(env, "link", renamed.id, {
+      state: "active",
+      expectedRevision: restored.revision,
+    });
+    expect(await publicLink(env, created.slug)).toBe(renamed.destinationUrl);
+  });
+  it("restores paste bytes exactly and refuses stale or overdue restores", async () => {
+    const created = await createResource(
+      env,
+      "paste",
+      {
+        title: "Recoverable note",
+        state: "active",
+        expiresAt: null,
+        body: "Private text\r\n🫖",
+        format: "markdown",
+      },
+      crypto.randomUUID(),
+    );
+    expect(created.slug).toMatch(/^[23456789abcdefghjkmnpqrstuvwxyz]{12}$/);
+    await deleteResource(env, "paste", created.id, created.revision);
+    await expect(
+      restoreResource(env, "paste", created.id, created.revision),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+    const restored = await restoreResource(
+      env,
+      "paste",
+      created.id,
+      created.revision + 1,
+    );
+    expect(restored.body).toBe("Private text\r\n🫖");
+    expect(restored.state).toBe("disabled");
+    await deleteResource(env, "paste", restored.id, restored.revision);
+    await env.DB.prepare("UPDATE resources SET purge_after=? WHERE id=?")
+      .bind(Date.now() - 1, created.id)
+      .run();
+    await expect(
+      restoreResource(env, "paste", created.id, restored.revision + 1),
+    ).rejects.toMatchObject({ code: "RESTORE_UNAVAILABLE" });
+  });
+  it("allows only one of restoring and permanently deleting the same revision", async () => {
+    const created = await createResource(
+      env,
+      "paste",
+      {
+        title: "Concurrent Trash",
+        state: "active",
+        expiresAt: null,
+        body: "Retain or remove as a whole",
+        format: "text",
+      },
+      crypto.randomUUID(),
+    );
+    await deleteResource(env, "paste", created.id, created.revision);
+    const revision = created.revision + 1;
+    const result = await Promise.allSettled([
+      restoreResource(env, "paste", created.id, revision),
+      purgeResourceContent(env, created.id, "paste", revision),
+    ]);
+    expect(result.filter((item) => item.status === "fulfilled")).toHaveLength(
+      1,
+    );
+    const row = await env.DB.prepare(
+      "SELECT deleted_at,purged_at,state FROM resources WHERE id=?",
+    )
+      .bind(created.id)
+      .first<{
+        deleted_at: number | null;
+        purged_at: number | null;
+        state: string;
+      }>();
+    const body = await env.DB.prepare(
+      "SELECT body FROM pastes WHERE resource_id=?",
+    )
+      .bind(created.id)
+      .first("body");
+    if (row!.deleted_at === null) {
+      expect(row!.state).toBe("disabled");
+      expect(row!.purged_at).toBeNull();
+      expect(body).toBe(created.body);
+    } else {
+      expect(row!.purged_at).not.toBeNull();
+      expect(body).toBeNull();
+    }
+  });
+  it("never erases a restored item through a stale permanent deletion", async () => {
+    const created = await createResource(
+      env,
+      "link",
+      input("stale-purge"),
+      crypto.randomUUID(),
+    );
+    await deleteResource(env, "link", created.id, created.revision);
+    const restored = await restoreResource(
+      env,
+      "link",
+      created.id,
+      created.revision + 1,
+    );
+    await expect(
+      purgeResourceContent(env, created.id, "link", created.revision + 1),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+    expect(await getResource(env, "link", created.id)).toEqual(restored);
   });
 });

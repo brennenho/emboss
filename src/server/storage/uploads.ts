@@ -35,6 +35,7 @@ export type BlobRow = {
   updated_at: number;
   lease_expires_at: number;
   purge_after: number | null;
+  purge_started_at: number | null;
   claim_id: string | null;
 };
 export const TRANSFER_TIMEOUT = 10 * 60 * 1000;
@@ -104,7 +105,7 @@ export async function initiateUpload(
   }
   for (let attempt = 0; attempt < 5; attempt++) {
     const id = crypto.randomUUID(),
-      slug = input.slug ?? generatedSlug(),
+      slug = input.slug ?? generatedSlug("file"),
       now = Date.now(),
       objectKey = `${purpose}s/${crypto.randomUUID()}`;
     const guard =
@@ -142,6 +143,9 @@ export async function initiateUpload(
       if (
         String(error).includes(
           "UNIQUE constraint failed: resources.kind, resources.slug",
+        ) ||
+        String(error).includes(
+          "UNIQUE constraint failed: resource_addresses.kind, resource_addresses.slug",
         )
       ) {
         if (!input.slug) continue;

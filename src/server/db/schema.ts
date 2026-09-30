@@ -3,6 +3,7 @@ import {
   check,
   index,
   integer,
+  primaryKey,
   sqliteTable,
   text,
   uniqueIndex,
@@ -71,6 +72,8 @@ export const resources = sqliteTable(
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
     deletedAt: integer("deleted_at"),
+    purgeAfter: integer("purge_after"),
+    purgedAt: integer("purged_at"),
   },
   (t) => [
     uniqueIndex("resource_slug")
@@ -78,11 +81,30 @@ export const resources = sqliteTable(
       .where(sql`${t.deletedAt} IS NULL`),
     index("resource_list").on(t.kind, t.state, t.updatedAt, t.id),
     index("resource_expiry").on(t.expiresAt),
+    index("resource_trash").on(t.deletedAt, t.purgedAt, t.purgeAfter),
     check("resource_kind", sql`${t.kind} IN ('link','paste','file')`),
     check(
       "resource_state",
       sql`${t.state} IN ('draft','active','disabled','deleted')`,
     ),
+  ],
+);
+export const resourceAddresses = sqliteTable(
+  "resource_addresses",
+  {
+    kind: text({ enum: ["link", "paste", "file"] }).notNull(),
+    slug: text().notNull(),
+    resourceId: text("resource_id")
+      .notNull()
+      .references(() => resources.id),
+    state: text({ enum: ["active", "retired"] })
+      .notNull()
+      .default("active"),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.kind, t.slug] }),
+    index("address_owner").on(t.resourceId, t.state),
   ],
 );
 export const links = sqliteTable("links", {
@@ -124,6 +146,7 @@ export const blobs = sqliteTable(
     updatedAt: integer("updated_at").notNull(),
     leaseExpiresAt: integer("lease_expires_at").notNull(),
     purgeAfter: integer("purge_after"),
+    purgeStartedAt: integer("purge_started_at"),
     claimId: text("claim_id"),
   },
   (t) => [

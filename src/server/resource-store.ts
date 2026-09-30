@@ -8,6 +8,7 @@ import {
   links,
   pastes,
   resources,
+  resourceAddresses,
 } from "./db/schema";
 import { config, type Env } from "./config";
 import { AppError } from "../shared/errors";
@@ -19,6 +20,8 @@ import {
   listSchema,
   type ResourceDto,
   type ResourceKind,
+  type TrashResourceDto,
+  type TrashResourcePage,
 } from "../shared/resources";
 import { sha256 } from "./auth/password";
 
@@ -58,6 +61,17 @@ export async function resourceDto(
       .where(eq(links.resourceId, row.id))
       .get();
     result.destinationUrl = link?.destinationUrl;
+    const aliases = await db
+      .select({ slug: resourceAddresses.slug })
+      .from(resourceAddresses)
+      .where(
+        and(
+          eq(resourceAddresses.resourceId, row.id),
+          eq(resourceAddresses.state, "active"),
+          sql`${resourceAddresses.slug} != ${row.slug}`,
+        ),
+      );
+    result.aliases = aliases.map((address) => address.slug);
   }
   if (row.kind === "paste") {
     const paste = await db
@@ -204,18 +218,20 @@ export async function publicResource(
   slug: string,
 ) {
   const row = await database(env)
-    .select()
-    .from(resources)
+    .select({ resource: resources })
+    .from(resourceAddresses)
+    .innerJoin(resources, eq(resources.id, resourceAddresses.resourceId))
     .where(
       and(
-        eq(resources.kind, kind),
-        eq(resources.slug, slug),
+        eq(resourceAddresses.kind, kind),
+        eq(resourceAddresses.slug, slug),
+        eq(resourceAddresses.state, "active"),
         isNull(resources.deletedAt),
       ),
     )
     .get();
-  if (!row || !available(row)) return null;
-  return row;
+  if (!row || !available(row.resource)) return null;
+  return row.resource;
 }
 type ContentInput = {
   title: string;
@@ -227,6 +243,7 @@ type ContentInput = {
   format?: "text" | "code" | "markdown";
   language?: string;
   expectedRevision?: number;
+  previousAddress?: "alias" | "retire";
 };
 export async function validateContent(
   env: Env,
@@ -234,10 +251,6 @@ export async function validateContent(
   input: ContentInput,
   slug: string,
 ) {
-  if (kind === "link" && input.state !== "active")
-    throw new AppError(400, "VALIDATION", "Delete a link to deactivate it.", {
-      state: "Links are live until they expire or are deleted.",
-    });
   const expiry = input.expiresAt ? Date.parse(input.expiresAt) : null;
   if (expiry !== null && expiry <= Date.now() && input.state === "active")
     throw new AppError(400, "VALIDATION", "Choose a future date and time.", {
@@ -248,7 +261,7 @@ export async function validateContent(
     const self = new URL(canonicalUrl(config(env).origin, kind, slug));
     if (
       dest.origin === self.origin &&
-      dest.pathname.replace(/\/$/, "") === self.pathname
+      decodedPath(dest.pathname).replace(/\/$/, "") === self.pathname
     )
       throw new AppError(
         400,
@@ -307,7 +320,7 @@ export async function createResource(
   }
   for (let attempt = 0; attempt < 5; attempt++) {
     const id = crypto.randomUUID(),
-      slug = input.slug ?? generatedSlug(),
+      slug = input.slug ?? generatedSlug(kind),
       now = Date.now();
     const expiresAt = await validateContent(env, kind, input, slug);
     if (expiresAt !== null && expiresAt <= now)
@@ -356,6 +369,9 @@ export async function createResource(
       if (
         String(error).includes(
           "UNIQUE constraint failed: resources.kind, resources.slug",
+        ) ||
+        String(error).includes(
+          "UNIQUE constraint failed: resource_addresses.kind, resource_addresses.slug",
         )
       ) {
         if (!input.slug) continue;
@@ -398,9 +414,40 @@ export async function updateResource(
   const slug = kind === "link" ? (input.slug ?? current.slug) : current.slug;
   const expiresAt = await validateContent(env, kind, input, slug),
     now = Date.now();
+  if (kind === "link" && input.destinationUrl) {
+    const destination = new URL(input.destinationUrl);
+    if (destination.origin === config(env).origin) {
+      const target = decodedPath(destination.pathname).replace(/^\/|\/$/g, "");
+      const owned = await dbOwnedAddress(env, id, target);
+      if (
+        owned &&
+        !(
+          input.previousAddress === "retire" &&
+          target === current.slug &&
+          slug !== current.slug
+        )
+      )
+        throw new AppError(
+          400,
+          "VALIDATION",
+          "The destination points to this link's address.",
+          { destinationUrl: "Choose a different destination." },
+        );
+    }
+  }
   const condition =
     "EXISTS(SELECT 1 FROM resources WHERE id=? AND kind=? AND revision=? AND deleted_at IS NULL)";
   const statements: D1PreparedStatement[] = [];
+  if (
+    kind === "link" &&
+    slug !== current.slug &&
+    input.previousAddress === "retire"
+  )
+    statements.push(
+      env.DB.prepare(
+        `UPDATE resource_addresses SET state='retired' WHERE resource_id=? AND slug=? AND ${condition}`,
+      ).bind(id, current.slug, id, kind, input.expectedRevision!),
+    );
   if (kind === "link")
     statements.push(
       env.DB.prepare(
@@ -445,7 +492,8 @@ export async function updateResource(
     if (
       String(error).includes(
         "UNIQUE constraint failed: resources.kind, resources.slug",
-      )
+      ) ||
+      String(error).includes("ADDRESS_RESERVED")
     )
       throw new AppError(409, "SLUG_TAKEN", "This address is already in use.", {
         slug: "Choose another address.",
@@ -467,7 +515,6 @@ export async function changeResourceState(
   id: string,
   input: { state: "active" | "disabled"; expectedRevision: number },
 ) {
-  if (kind === "link") throw new AppError(404, "NOT_FOUND", "Not found.");
   const current = await getResource(env, kind, id);
   if (current.revision !== input.expectedRevision) throw conflict();
   if (
@@ -512,8 +559,8 @@ export async function deleteResource(
       "UPDATE blobs SET state='pending_delete',purge_after=?,updated_at=? WHERE id IN(SELECT blob_id FROM files WHERE resource_id=?) AND EXISTS(SELECT 1 FROM resources WHERE id=? AND kind=? AND revision=? AND deleted_at IS NULL)",
     ).bind(purge, now, id, id, kind, revision),
     env.DB.prepare(
-      "UPDATE resources SET state='deleted',deleted_at=?,updated_at=?,revision=revision+1 WHERE id=? AND kind=? AND revision=? AND deleted_at IS NULL RETURNING id",
-    ).bind(now, now, id, kind, revision),
+      "UPDATE resources SET state='deleted',deleted_at=?,purge_after=?,updated_at=?,revision=revision+1 WHERE id=? AND kind=? AND revision=? AND deleted_at IS NULL RETURNING id",
+    ).bind(now, purge, now, id, kind, revision),
   ]);
   if (!result[1]?.results.length) throw conflict();
 }
@@ -526,15 +573,255 @@ export async function publicLink(env: Env, slug: string) {
       expiresAt: resources.expiresAt,
       deletedAt: resources.deletedAt,
     })
-    .from(resources)
+    .from(resourceAddresses)
+    .innerJoin(resources, eq(resources.id, resourceAddresses.resourceId))
     .innerJoin(links, eq(links.resourceId, resources.id))
     .where(
       and(
-        eq(resources.kind, "link"),
-        eq(resources.slug, slug),
+        eq(resourceAddresses.kind, "link"),
+        eq(resourceAddresses.slug, slug),
+        eq(resourceAddresses.state, "active"),
         isNull(resources.deletedAt),
       ),
     )
     .get();
   return row && available(row) ? row.destinationUrl : null;
+}
+
+function decodedPath(path: string) {
+  try {
+    return decodeURIComponent(path);
+  } catch {
+    return path;
+  }
+}
+
+async function dbOwnedAddress(env: Env, id: string, slug: string) {
+  return env.DB.prepare(
+    "SELECT 1 FROM resource_addresses WHERE kind='link' AND resource_id=? AND slug=? AND state='active'",
+  )
+    .bind(id, slug)
+    .first();
+}
+
+export async function listTrashResources(
+  env: Env,
+  query: Record<string, unknown>,
+): Promise<TrashResourcePage> {
+  const input = listSchema.parse(query);
+  const now = Date.now();
+  const filters = [
+    sql`${resources.deletedAt} IS NOT NULL`,
+    isNull(resources.purgedAt),
+  ];
+  if (input.q)
+    filters.push(
+      sql`(instr(lower(${resources.title}),lower(${input.q}))>0 OR instr(${resources.slug},lower(${input.q}))>0)`,
+    );
+  if (input.cursor) {
+    try {
+      const cursor = JSON.parse(
+        Buffer.from(input.cursor, "base64url").toString(),
+      ) as { at: number; id: string };
+      if (!Number.isSafeInteger(cursor.at) || typeof cursor.id !== "string")
+        throw new Error();
+      filters.push(
+        sql`(${resources.deletedAt}<${cursor.at} OR (${resources.deletedAt}=${cursor.at} AND ${resources.id}<${cursor.id}))`,
+      );
+    } catch {
+      throw new AppError(400, "INVALID_CURSOR", "Reload the list.");
+    }
+  }
+  const rows = await database(env)
+    .select({
+      resource: resources,
+      addressOwner: resourceAddresses.resourceId,
+      filename: files.originalFilename,
+      bytes: blobs.expectedBytes,
+      storedBytes: blobs.storedBytes,
+      uploadState: blobs.state,
+      purgeStartedAt: blobs.purgeStartedAt,
+      blobPurgeAfter: blobs.purgeAfter,
+      destinationUrl: links.destinationUrl,
+      format: pastes.format,
+    })
+    .from(resources)
+    .leftJoin(
+      resourceAddresses,
+      and(
+        eq(resourceAddresses.kind, resources.kind),
+        eq(resourceAddresses.slug, resources.slug),
+      ),
+    )
+    .leftJoin(links, eq(links.resourceId, resources.id))
+    .leftJoin(pastes, eq(pastes.resourceId, resources.id))
+    .leftJoin(files, eq(files.resourceId, resources.id))
+    .leftJoin(blobs, eq(blobs.id, files.blobId))
+    .where(and(...filters))
+    .orderBy(desc(resources.deletedAt), desc(resources.id))
+    .limit(input.limit + 1);
+  const visible = rows.slice(0, input.limit);
+  const last = visible.at(-1)?.resource;
+  return {
+    items: visible.map((row): TrashResourceDto => {
+      const resource = row.resource;
+      const reason =
+        row.addressOwner !== resource.id
+          ? "This address was reused before address protection was added."
+          : resource.purgeAfter === null || resource.purgeAfter <= now
+            ? "The recovery period has ended."
+            : resource.kind === "file" &&
+                (row.uploadState !== "pending_delete" ||
+                  row.purgeStartedAt !== null ||
+                  row.bytes !== row.storedBytes ||
+                  row.blobPurgeAfter === null ||
+                  row.blobPurgeAfter <= now)
+              ? "The file did not finish uploading or has already been removed."
+              : undefined;
+      return {
+        ...baseDto(env, resource),
+        deletedAt: new Date(resource.deletedAt!).toISOString(),
+        purgeAfter: new Date(
+          resource.purgeAfter ?? resource.deletedAt!,
+        ).toISOString(),
+        canRestore: !reason,
+        ...(reason ? { restoreUnavailableReason: reason } : {}),
+        ...(resource.kind === "file"
+          ? {
+              filename: row.filename ?? undefined,
+              bytes: row.bytes ?? undefined,
+            }
+          : {}),
+      };
+    }),
+    nextCursor:
+      rows.length > input.limit && last
+        ? Buffer.from(
+            JSON.stringify({ at: last.deletedAt, id: last.id }),
+          ).toString("base64url")
+        : null,
+  };
+}
+
+function cannotRestore(message = "This item can no longer be restored.") {
+  return new AppError(409, "RESTORE_UNAVAILABLE", message);
+}
+
+export async function restoreResource(
+  env: Env,
+  kind: ResourceKind,
+  id: string,
+  revision: number,
+) {
+  const row = await database(env)
+    .select()
+    .from(resources)
+    .where(and(eq(resources.id, id), eq(resources.kind, kind)))
+    .get();
+  if (!row || row.deletedAt === null)
+    throw new AppError(404, "NOT_FOUND", "This item is not in Trash.");
+  if (row.revision !== revision) throw conflict();
+  if (
+    row.purgedAt !== null ||
+    row.purgeAfter === null ||
+    row.purgeAfter <= Date.now()
+  )
+    throw cannotRestore();
+  const address = await env.DB.prepare(
+    "SELECT resource_id FROM resource_addresses WHERE kind=? AND slug=?",
+  )
+    .bind(kind, row.slug)
+    .first<{ resource_id: string }>();
+  if (address?.resource_id !== id)
+    throw cannotRestore(
+      "This address was reused before address protection was added.",
+    );
+  if (kind === "file") {
+    const blob = await env.DB.prepare(
+      "SELECT b.* FROM blobs b JOIN files f ON f.blob_id=b.id WHERE f.resource_id=?",
+    )
+      .bind(id)
+      .first<{
+        object_key: string;
+        state: string;
+        expected_bytes: number;
+        stored_bytes: number;
+        purge_after: number | null;
+        purge_started_at: number | null;
+      }>();
+    if (
+      !blob ||
+      blob.state !== "pending_delete" ||
+      blob.purge_started_at !== null ||
+      blob.stored_bytes !== blob.expected_bytes ||
+      blob.purge_after === null ||
+      blob.purge_after <= Date.now()
+    )
+      throw cannotRestore(
+        "The file did not finish uploading or has already been removed.",
+      );
+    const object = await env.FILES.head(blob.object_key);
+    if (!object || object.size !== blob.expected_bytes)
+      throw cannotRestore("The stored file is missing or incomplete.");
+  }
+  const now = Date.now();
+  const condition =
+    "id=? AND kind=? AND revision=? AND deleted_at IS NOT NULL AND purged_at IS NULL AND purge_after>? AND EXISTS(SELECT 1 FROM resource_addresses a WHERE a.resource_id=resources.id AND a.kind=resources.kind AND a.slug=resources.slug)";
+  const statements: D1PreparedStatement[] = [];
+  if (kind === "file")
+    statements.push(
+      env.DB.prepare(
+        `UPDATE blobs SET state='ready',purge_after=NULL,purge_started_at=NULL,updated_at=? WHERE id IN(SELECT blob_id FROM files WHERE resource_id=?) AND state='pending_delete' AND purge_started_at IS NULL AND stored_bytes=expected_bytes AND purge_after>? AND EXISTS(SELECT 1 FROM resources WHERE ${condition})`,
+      ).bind(now, id, now, id, kind, revision, now),
+    );
+  const contentExists =
+    kind === "file"
+      ? "EXISTS(SELECT 1 FROM files f JOIN blobs b ON b.id=f.blob_id WHERE f.resource_id=resources.id AND b.state='ready' AND b.purge_started_at IS NULL)"
+      : `EXISTS(SELECT 1 FROM ${kind === "link" ? "links" : "pastes"} WHERE resource_id=resources.id)`;
+  statements.push(
+    env.DB.prepare(
+      `UPDATE resources SET state='disabled',deleted_at=NULL,purge_after=NULL,updated_at=?,revision=revision+1 WHERE ${condition} AND ${contentExists} RETURNING id`,
+    ).bind(now, id, kind, revision, now),
+  );
+  const result = await env.DB.batch(statements);
+  if (!result.at(-1)?.results.length) throw conflict();
+  return getResource(env, kind, id);
+}
+
+// Keep tombstones and address ownership after removing content. Every statement
+// uses the claimed revision, so a concurrent restore cannot be partly erased.
+export async function purgeResourceContent(
+  env: Env,
+  id: string,
+  kind: ResourceKind,
+  revision: number,
+  now = Date.now(),
+) {
+  const claimed =
+    "EXISTS(SELECT 1 FROM resources WHERE id=? AND kind=? AND revision=? AND deleted_at IS NOT NULL AND purged_at=?)";
+  const result = await env.DB.batch([
+    env.DB.prepare(
+      "UPDATE resources SET purged_at=?,purge_after=?,title='',expires_at=NULL,updated_at=?,revision=revision+1 WHERE id=? AND kind=? AND revision=? AND deleted_at IS NOT NULL AND purged_at IS NULL RETURNING id",
+    ).bind(now, now, now, id, kind, revision),
+    env.DB.prepare(
+      `UPDATE blobs SET state='pending_delete',purge_after=CASE WHEN stored_bytes=expected_bytes THEN ? ELSE MAX(lease_expires_at,?) END,purge_started_at=?,updated_at=? WHERE id IN(SELECT blob_id FROM files WHERE resource_id=?) AND state!='purged' AND ${claimed}`,
+    ).bind(now, now, now, now, id, id, kind, revision + 1, now),
+    env.DB.prepare(`DELETE FROM links WHERE resource_id=? AND ${claimed}`).bind(
+      id,
+      id,
+      kind,
+      revision + 1,
+      now,
+    ),
+    env.DB.prepare(
+      `DELETE FROM pastes WHERE resource_id=? AND ${claimed}`,
+    ).bind(id, id, kind, revision + 1, now),
+    env.DB.prepare(
+      `UPDATE files SET original_filename='' WHERE resource_id=? AND ${claimed}`,
+    ).bind(id, id, kind, revision + 1, now),
+    env.DB.prepare(
+      `UPDATE resource_addresses SET state='retired' WHERE resource_id=? AND ${claimed}`,
+    ).bind(id, id, kind, revision + 1, now),
+  ]);
+  if (!result[0]?.results.length) throw conflict();
 }

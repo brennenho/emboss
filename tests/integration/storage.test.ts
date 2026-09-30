@@ -22,6 +22,9 @@ import {
   listResources,
   deleteResource,
   updateResource,
+  restoreResource,
+  listTrashResources,
+  purgeResourceContent,
 } from "../../src/server/resource-store";
 import { maintenance } from "../../src/server/maintenance";
 const env = bindings as unknown as Env & { TEST_MIGRATIONS: D1Migration[] };
@@ -56,7 +59,7 @@ const png = new Uint8Array(
   ),
 );
 describe("streamed private file lifecycle", () => {
-  it("reuses a deleted file address while retaining and then purging only the old binary", async () => {
+  it("keeps deleted file addresses reserved after their bytes are purged", async () => {
     const old = await initiateUpload(
       env,
       { filename: "old.txt", title: "Old file", bytes: 3, slug: "again" },
@@ -66,39 +69,31 @@ describe("streamed private file lifecycle", () => {
     const oldPublished = await publish(old.uploadId);
     const oldFile = (await findFile(env, oldPublished.slug))!;
     await deleteResource(env, "file", oldPublished.id, oldPublished.revision);
-    const replacement = await initiateUpload(
-      env,
-      { filename: "new.txt", title: "New file", bytes: 2, slug: "again" },
-      crypto.randomUUID(),
-    );
+    await expect(
+      initiateUpload(
+        env,
+        { filename: "new.txt", title: "New file", bytes: 2, slug: "again" },
+        crypto.randomUUID(),
+      ),
+    ).rejects.toMatchObject({ code: "SLUG_TAKEN" });
     expect(await findFile(env, "again")).toBeNull();
-    await transferUpload(
-      env,
-      replacement.uploadId,
-      request(new Uint8Array([8, 9])),
-    );
-    await publish(replacement.uploadId);
-    expect((await findFile(env, "again"))?.id).toBe(replacement.uploadId);
     expect(await env.FILES.head(oldFile.object_key)).not.toBeNull();
     await maintenance(env, Date.now() + 31 * 86400000);
     expect(await env.FILES.head(oldFile.object_key)).toBeNull();
-    const file = (await findFile(env, "again"))!;
-    expect(file.id).toBe(replacement.uploadId);
-    const response = await serveBlob(
-      env,
-      file,
-      new Request("http://localhost:3000/f/again/download"),
-      file.original_filename,
-    );
-    expect(new Uint8Array(await response.arrayBuffer())).toEqual(
-      new Uint8Array([8, 9]),
-    );
+    expect(await findFile(env, "again")).toBeNull();
+    await expect(
+      initiateUpload(
+        env,
+        { filename: "new.txt", title: "New file", bytes: 2, slug: "again" },
+        crypto.randomUUID(),
+      ),
+    ).rejects.toMatchObject({ code: "SLUG_TAKEN" });
   });
   it("streams 25 MiB, requires publication, and returns identical bytes and ranges", async () => {
     const size = 25 * 1024 ** 2,
       item = await initiation(size);
     expect(item.resource!.slug).toMatch(
-      /^[23456789abcdefghjkmnpqrstuvwxyz]{4}$/,
+      /^[23456789abcdefghjkmnpqrstuvwxyz]{12}$/,
     );
     const bytes = new Uint8Array(size);
     for (let i = 0; i < bytes.length; i++) bytes[i] = i % 251;
@@ -401,4 +396,89 @@ it("visibility requires a ready upload and lists projected file metadata", async
     expectedRevision: published.revision,
   });
   expect(await findFile(env, published.slug)).toBeNull();
+});
+
+describe("file recovery", () => {
+  it("restores only completed retained files and requires explicit publication", async () => {
+    const item = await initiation(3);
+    await transferUpload(
+      env,
+      item.uploadId,
+      request(new Uint8Array([4, 5, 6])),
+    );
+    const published = await publish(item.uploadId);
+    await deleteResource(env, "file", item.uploadId, published.revision);
+    const trash = await listTrashResources(env, { q: item.resource!.slug });
+    expect(trash.items[0]?.canRestore).toBe(true);
+    const restored = await restoreResource(
+      env,
+      "file",
+      item.uploadId,
+      published.revision + 1,
+    );
+    expect(restored.state).toBe("disabled");
+    expect(restored.uploadState).toBe("ready");
+    expect(await findFile(env, restored.slug)).toBeNull();
+    expect(await findFile(env, restored.id, true)).not.toBeNull();
+    await publish(item.uploadId, restored.revision);
+    const blob = await findFile(env, restored.slug);
+    const object = await env.FILES.get(blob!.object_key);
+    expect(new Uint8Array(await object!.arrayBuffer())).toEqual(
+      new Uint8Array([4, 5, 6]),
+    );
+  });
+  it("rejects restoring missing blobs and uploads that never finished", async () => {
+    const missing = await initiation(2);
+    await transferUpload(
+      env,
+      missing.uploadId,
+      request(new Uint8Array([1, 2])),
+    );
+    const blob = await env.DB.prepare("SELECT object_key FROM blobs WHERE id=?")
+      .bind(missing.uploadId)
+      .first<string>("object_key");
+    await deleteResource(env, "file", missing.uploadId, 1);
+    await env.FILES.delete(blob!);
+    await expect(
+      restoreResource(env, "file", missing.uploadId, 2),
+    ).rejects.toMatchObject({ code: "RESTORE_UNAVAILABLE" });
+    const unfinished = await initiation(2);
+    await deleteResource(env, "file", unfinished.uploadId, 1);
+    await expect(
+      restoreResource(env, "file", unfinished.uploadId, 2),
+    ).rejects.toMatchObject({ code: "RESTORE_UNAVAILABLE" });
+    expect(
+      (await listTrashResources(env, { q: unfinished.resource!.slug })).items[0]
+        ?.canRestore,
+    ).toBe(false);
+  });
+  it("cannot resurrect a file when permanent deletion starts during its R2 check", async () => {
+    const item = await initiation(2);
+    await transferUpload(env, item.uploadId, request(new Uint8Array([1, 2])));
+    await deleteResource(env, "file", item.uploadId, 1);
+    const raced = {
+      ...env,
+      FILES: {
+        head: async (key: string) => {
+          const object = await env.FILES.head(key);
+          await purgeResourceContent(env, item.uploadId, "file", 2);
+          return object;
+        },
+      },
+    } as unknown as Env;
+    await expect(
+      restoreResource(raced, "file", item.uploadId, 2),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+    const blob = await env.DB.prepare(
+      "SELECT state,purge_started_at FROM blobs WHERE id=?",
+    )
+      .bind(item.uploadId)
+      .first<{ state: string; purge_started_at: number | null }>();
+    expect(blob!.state).toBe("pending_delete");
+    expect(blob!.purge_started_at).not.toBeNull();
+    expect(await findFile(env, item.uploadId, true)).toBeNull();
+    await expect(
+      restoreResource(env, "file", item.uploadId, 3),
+    ).rejects.toMatchObject({ code: "RESTORE_UNAVAILABLE" });
+  });
 });

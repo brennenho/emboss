@@ -134,7 +134,11 @@ export const revisionSchema = z
   .object({ expectedRevision: z.number().int().positive() })
   .strict();
 export const linkUpdateSchema = linkSchema
-  .extend({ expectedRevision: z.number().int().positive() })
+  .extend({
+    state: z.enum(["active", "disabled"]).default("active"),
+    expectedRevision: z.number().int().positive(),
+    previousAddress: z.enum(["alias", "retire"]).default("alias"),
+  })
   .strict();
 export const pasteUpdateSchema = pasteSchema
   .omit({ slug: true })
@@ -157,6 +161,7 @@ export type ResourceDto = {
   updatedAt: string;
   url: string;
   destinationUrl?: string;
+  aliases?: string[];
   body?: string;
   format?: "text" | "code" | "markdown";
   language?: string;
@@ -165,6 +170,16 @@ export type ResourceDto = {
   uploadState?: string;
   previewable?: boolean;
   uploadId?: string;
+};
+export type TrashResourceDto = ResourceDto & {
+  deletedAt: string;
+  purgeAfter: string;
+  canRestore: boolean;
+  restoreUnavailableReason?: string;
+};
+export type TrashResourcePage = {
+  items: TrashResourceDto[];
+  nextCursor: string | null;
 };
 export type ResourcePage = { items: ResourceDto[]; nextCursor: string | null };
 export const listSchema = z.object({
@@ -177,16 +192,21 @@ export const listSchema = z.object({
 });
 const generatedAlphabet = "23456789abcdefghjkmnpqrstuvwxyz";
 export const generatedSlugLength = 4;
-export function generatedSlug() {
+export const generatedContentSlugLength = 12;
+export function generatedSlugLengthForKind(kind: ResourceKind) {
+  return kind === "link" ? generatedSlugLength : generatedContentSlugLength;
+}
+export function generatedSlug(kind: ResourceKind = "link") {
+  const length = generatedSlugLengthForKind(kind);
   // Rejection sampling keeps the 31-character alphabet uniformly distributed.
   const limit = 256 - (256 % generatedAlphabet.length);
   while (true) {
     let slug = "";
-    while (slug.length < generatedSlugLength) {
+    while (slug.length < length) {
       for (const byte of crypto.getRandomValues(new Uint8Array(8))) {
         if (byte < limit)
           slug += generatedAlphabet[byte % generatedAlphabet.length];
-        if (slug.length === generatedSlugLength) break;
+        if (slug.length === length) break;
       }
     }
     if (!reservedSlugs.has(slug)) return slug;
