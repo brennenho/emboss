@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useRef } from "react";
-import { EditorState, Compartment, type Extension } from "@codemirror/state";
+import { EditorState, Compartment, Annotation } from "@codemirror/state";
 import {
   EditorView,
   keymap,
@@ -12,52 +12,28 @@ import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import {
   syntaxHighlighting,
   defaultHighlightStyle,
-  StreamLanguage,
 } from "@codemirror/language";
-async function languageExtension(language: string): Promise<Extension> {
-  switch (language) {
-    case "javascript":
-    case "typescript":
-      return (await import("@codemirror/lang-javascript")).javascript({
-        typescript: language === "typescript",
-      });
-    case "json":
-      return (await import("@codemirror/lang-json")).json();
-    case "html":
-      return (await import("@codemirror/lang-html")).html();
-    case "css":
-      return (await import("@codemirror/lang-css")).css();
-    case "python":
-      return (await import("@codemirror/lang-python")).python();
-    case "sql":
-      return (await import("@codemirror/lang-sql")).sql();
-    case "shell":
-      return StreamLanguage.define(
-        (await import("@codemirror/legacy-modes/mode/shell")).shell,
-      );
-    case "yaml":
-      return StreamLanguage.define(
-        (await import("@codemirror/legacy-modes/mode/yaml")).yaml,
-      );
-    default:
-      return [];
-  }
-}
+import { languageExtension } from "./language-extension";
+
+const externalValue = Annotation.define<boolean>();
+
 export default function CodeEditor({
   value,
   language,
   onChange,
   error,
+  autoFocus = false,
 }: {
   value: string;
   language: string;
   onChange: (value: string) => void;
   error?: string;
+  autoFocus?: boolean;
 }) {
   const host = useRef<HTMLDivElement>(null),
     view = useRef<EditorView | null>(null),
     callback = useRef(onChange),
-    initial = useRef(value),
+    initial = useRef({ value, autoFocus }),
     compartment = useRef(new Compartment()),
     accessibility = useRef(new Compartment());
   useEffect(() => {
@@ -68,7 +44,7 @@ export default function CodeEditor({
     const editor = new EditorView({
       parent: host.current,
       state: EditorState.create({
-        doc: initial.current,
+        doc: initial.current.value,
         extensions: [
           lineNumbers(),
           history(),
@@ -97,13 +73,21 @@ export default function CodeEditor({
             },
           }),
           EditorView.updateListener.of((update) => {
-            if (update.docChanged)
+            if (
+              update.docChanged &&
+              update.transactions.some(
+                (transaction) =>
+                  transaction.docChanged &&
+                  !transaction.annotation(externalValue),
+              )
+            )
               callback.current(update.state.doc.toString());
           }),
         ],
       }),
     });
     view.current = editor;
+    if (initial.current.autoFocus) editor.focus();
     return () => {
       view.current = null;
       editor.destroy();
@@ -138,6 +122,7 @@ export default function CodeEditor({
     if (editor && editor.state.doc.toString() !== value)
       editor.dispatch({
         changes: { from: 0, to: editor.state.doc.length, insert: value },
+        annotations: externalValue.of(true),
       });
   }, [value]);
   return <div ref={host} className="editor-surface" />;
