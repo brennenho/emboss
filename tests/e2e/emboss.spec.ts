@@ -154,9 +154,27 @@ test("creates a four-character link from only its destination and reuses it afte
   const original = await json<Resource>(`/api/admin/links/${id}`, "GET");
   expect(original.slug).toMatch(/^[23456789abcdefghjkmnpqrstuvwxyz]{4}$/);
   expect(original.title).toBe("example.org");
+  await expect(
+    page.getByRole("button", { name: /^(Enable|Disable)$/ }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("combobox", { name: "Filter links" }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("columnheader", { name: "State", exact: true }),
+  ).toHaveCount(0);
+  expect(
+    (
+      await request.patch(`/api/admin/links/${id}/state`, {
+        headers,
+        data: { state: "disabled", expectedRevision: original.revision },
+      })
+    ).status(),
+  ).toBe(404);
   expect(
     (await request.get(original.url, { maxRedirects: 0 })).headers().location,
   ).toBe("https://example.org/first");
+  await page.getByLabel("Destination URL").fill("invalid unsaved destination");
   await page.getByRole("button", { name: "Delete", exact: true }).click();
   await expect(page.getByRole("alertdialog")).toContainText("Reusing it");
   const deletion = page.waitForResponse(
@@ -244,6 +262,51 @@ test("creates and edits a link, protects unsaved edits, and exports decodable QR
   await expect(
     page.getByRole("button", { name: "Share", exact: true }),
   ).toBeFocused();
+  await page.getByLabel("Destination URL").fill("https://example.net/edited");
+  await page.getByRole("button", { name: "Save changes", exact: true }).click();
+  await expect(page.locator(".editor-status:visible")).toHaveText("Saved");
+  expect(
+    (await request.get(`/${slug}`, { maxRedirects: 0 })).headers().location,
+  ).toBe("https://example.net/edited");
+  const renamedSlug = `${slug}-renamed`;
+  await page.getByLabel("Custom address").fill(renamedSlug);
+  await expect(
+    page.getByText("Changing the address stops the old link and QR code."),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Save changes", exact: true }).click();
+  await expect(page.locator(".editor-status:visible")).toHaveText("Saved");
+  await expect(page.locator(".address-plate:visible")).toContainText(
+    `${origin}/${renamedSlug}`,
+  );
+  expect((await request.get(`/${slug}`, { maxRedirects: 0 })).status()).toBe(
+    404,
+  );
+  expect(
+    (await request.get(`/${renamedSlug}`, { maxRedirects: 0 })).headers()
+      .location,
+  ).toBe("https://example.net/edited");
+  await page.getByRole("button", { name: "Share", exact: true }).click();
+  const renamedQr = page.getByRole("img", {
+    name: `QR code for ${origin}/${renamedSlug}`,
+  });
+  await expect(renamedQr).toBeVisible();
+  const renamedImage = PNG.sync.read(
+    Buffer.from(
+      (await renamedQr.getAttribute("src"))!.split(",")[1]!,
+      "base64",
+    ),
+  );
+  expect(
+    jsQR(
+      new Uint8ClampedArray(renamedImage.data),
+      renamedImage.width,
+      renamedImage.height,
+    )?.data,
+  ).toBe(`${origin}/${renamedSlug}`);
+  await expect(
+    page.getByRole("link", { name: "Open address", exact: true }),
+  ).toHaveAttribute("href", `${origin}/${renamedSlug}`);
+  await page.keyboard.press("Escape");
   const itemId = new URL(page.url()).searchParams.get("item")!;
   const item = await json<Resource>(`/api/admin/links/${itemId}`, "GET");
   const payload = {
@@ -264,13 +327,18 @@ test("creates and edits a link, protects unsaved edits, and exports decodable QR
   );
   page.once("dialog", (dialog) => dialog.accept());
   await page.reload();
-  await page.getByRole("button", { name: "Disable", exact: true }).click();
-  await expect(
-    page.getByRole("button", { name: "Enable", exact: true }),
-  ).toBeVisible();
-  expect((await request.get(`/${slug}`, { maxRedirects: 0 })).status()).toBe(
-    404,
+  const deletion = page.waitForResponse(
+    (response) =>
+      response.url().endsWith(`/api/admin/links/${itemId}`) &&
+      response.request().method() === "DELETE",
   );
+  await page.getByRole("button", { name: "Delete", exact: true }).click();
+  await page.getByRole("button", { name: "Delete item", exact: true }).click();
+  expect((await deletion).status()).toBe(204);
+  await expect(page).toHaveURL(/\/admin\/links$/);
+  expect(
+    (await request.get(`/${renamedSlug}`, { maxRedirects: 0 })).status(),
+  ).toBe(404);
 });
 test("renders sanitized Markdown and exact raw text with draft and expiry gates", async () => {
   const body =
@@ -626,13 +694,23 @@ test("narrow workspaces preserve readable controls, long content, and sharing fo
   await expect(page).toHaveTitle("Links · Emboss");
   await page.getByLabel("Search links", { exact: true }).fill(`${slug}-layout`);
   await page.getByRole("button", { name: "Search", exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`q=${slug}-layout`));
   await expect(
     page.getByRole("button", { name: new RegExp(`${slug}-layout`) }),
   ).toBeVisible();
-  await page.getByLabel("Filter links").click();
-  await page.getByRole("option", { name: "Draft", exact: true }).click();
+  await page
+    .getByLabel("Search links", { exact: true })
+    .fill(`${slug}-missing`);
+  await page.getByRole("button", { name: "Search", exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`q=${slug}-missing`));
   await expect(
     page.getByRole("heading", { name: "No matching links" }),
+  ).toBeVisible();
+  await page.goto(`/admin/pastes?q=${paste.slug}`);
+  await page.getByLabel("Filter pastes").click();
+  await page.getByRole("option", { name: "Draft", exact: true }).click();
+  await expect(
+    page.getByText("No matching pastes.", { exact: true }),
   ).toBeVisible();
   for (const icon of ["/icon.svg", "/favicon.ico", "/apple-touch-icon.png"])
     expect((await request.get(icon)).status(), icon).toBe(200);
@@ -881,29 +959,28 @@ test("creation keeps later typing across the first saved URL and New starts clea
 });
 
 test("revoking published content ignores invalid drafts and preserves them", async () => {
-  const link = await json<Resource>("/api/admin/links", "POST", {
+  const paste = await json<Resource>("/api/admin/pastes", "POST", {
     title: "Revocation",
-    destinationUrl: "https://example.org/valid",
+    body: "Saved content",
+    format: "text",
+    language: "text",
     state: "active",
     expiresAt: null,
   });
-  await page.goto(`/admin/links?item=${link.id}`);
-  await page.getByLabel("Destination URL").fill("invalid draft");
+  await page.goto(`/admin/pastes?item=${paste.id}`);
+  await page.getByLabel("Content", { exact: true }).fill("");
   await page.getByRole("button", { name: "Disable", exact: true }).click();
   await expect(
-    page.getByRole("button", { name: "Enable", exact: true }),
+    page.getByRole("button", { name: "Publish paste", exact: true }),
   ).toBeVisible();
-  await expect(page.getByLabel("Destination URL")).toHaveValue("invalid draft");
-  expect((await request.get(link.url, { maxRedirects: 0 })).status()).toBe(404);
-  await page.getByRole("button", { name: "Enable", exact: true }).click();
-  await expect(
-    page.getByRole("button", { name: "Disable", exact: true }),
-  ).toBeVisible();
-  await expect(page.getByLabel("Destination URL")).toHaveValue("invalid draft");
+  await expect(page.getByLabel("Content", { exact: true })).toHaveValue("");
   expect(
-    (await request.get(link.url, { maxRedirects: 0 })).headers().location,
-  ).toBe("https://example.org/valid");
-  await page.getByLabel("Destination URL").fill("https://example.org/valid");
+    (await request.get(paste.url + "/raw", { maxRedirects: 0 })).status(),
+  ).toBe(404);
+  expect(
+    (await json<Resource>(`/api/admin/pastes/${paste.id}`, "GET")).body,
+  ).toBe("Saved content");
+  await page.getByLabel("Content", { exact: true }).fill("Saved content");
   await page.goto("/admin/business-card");
   const name = page.getByLabel("Display name");
   await name.fill("Saved public identity");

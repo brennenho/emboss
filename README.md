@@ -54,14 +54,18 @@ is explicit for pastes, files, and the card. Published content is **unlisted,
 not access-controlled**: anyone with its URL can open it. Disable, expiry, and
 delete revoke future access immediately; downloaded copies cannot be revoked.
 Generated addresses use four random lowercase letters or numbers, excluding
-`0`, `1`, `i`, `l`, and `o`. Custom addresses are optional. An item keeps its address
-while it exists; deleting it releases the address for reuse. Old links and QR
-codes then lead to the replacement item. Expiry alone does not release an address
-or delete file bytes.
+`0`, `1`, `i`, `l`, and `o`. Custom addresses are optional. Links are live on creation;
+delete them to deactivate them. Destinations, labels, addresses, and expiry are
+editable. Changing a destination keeps the short address working. Renaming or
+deleting a link releases its old address for reuse; old links and QR codes then
+lead to any replacement. Paste and file addresses stay fixed until deletion.
+Expiry alone does not release an address or delete file bytes. Previously disabled
+or draft links stay unavailable until explicitly saved or deleted.
 
 Editors show Saved, Saving, or Unsaved changes. Saving preserves newer typing;
-Disable and Unpublish revoke access without saving unfinished edits. Changes
-from another tab trigger a revision conflict instead of overwriting saved work.
+Delete, Disable (pastes/files), and Unpublish revoke access without saving unfinished
+edits. Changes from another tab trigger a revision conflict instead of overwriting
+saved work.
 
 The root redirects to the configured personal website, otherwise to a published
 card, otherwise returns unavailable. Domains and public identity are configurable;

@@ -17,6 +17,7 @@ import {
   available,
   generatedSlug,
   linkSchema,
+  linkUpdateSchema,
   slugSchema,
   webUrl,
 } from "../../src/shared/resources";
@@ -35,6 +36,174 @@ const input = (slug: string) => ({
   destinationUrl: "https://example.org/start?stored=1",
 });
 describe("stable resource lifecycle and atomic writes", () => {
+  it("creates live links and only revives legacy disabled links on an explicit save", async () => {
+    const parsed = linkSchema.parse({ destinationUrl: "https://example.org" });
+    expect(parsed.state).toBe("active");
+    for (const state of ["draft", "disabled"])
+      expect(linkSchema.safeParse({ ...parsed, state }).success).toBe(false);
+    const item = await createResource(env, "link", parsed, crypto.randomUUID());
+    await expect(
+      changeResourceState(env, "link", item.id, {
+        state: "disabled",
+        expectedRevision: item.revision,
+      }),
+    ).rejects.toMatchObject({ status: 404 });
+    await expect(
+      updateResource(env, "link", item.id, {
+        ...parsed,
+        state: "disabled",
+        expectedRevision: item.revision,
+      }),
+    ).rejects.toMatchObject({ status: 400 });
+    // Existing installations may contain links disabled before the simpler lifecycle.
+    await env.DB.prepare("UPDATE resources SET state='disabled' WHERE id=?")
+      .bind(item.id)
+      .run();
+    expect((await getResource(env, "link", item.id)).state).toBe("disabled");
+    expect(await publicLink(env, item.slug)).toBeNull();
+    const saved = await updateResource(env, "link", item.id, {
+      ...parsed,
+      expectedRevision: item.revision,
+    });
+    expect(saved.state).toBe("active");
+    expect(await publicLink(env, item.slug)).toBe(parsed.destinationUrl);
+  });
+  it("renames links atomically, releases the old address, and rejects stale edits", async () => {
+    const key = crypto.randomUUID();
+    const item = await createResource(env, "link", input("rename-before"), key);
+    const saved = await updateResource(
+      env,
+      "link",
+      item.id,
+      linkUpdateSchema.parse({
+        ...input("rename-after"),
+        destinationUrl: "https://example.org/after",
+        expectedRevision: item.revision,
+      }),
+    );
+    expect(saved).toMatchObject({
+      slug: "rename-after",
+      revision: 2,
+      url: "http://localhost:3000/rename-after",
+    });
+    expect(await publicLink(env, item.slug)).toBeNull();
+    expect(await publicLink(env, saved.slug)).toBe(saved.destinationUrl);
+    expect(
+      (await createResource(env, "link", input("rename-before"), key)).slug,
+    ).toBe(saved.slug);
+    const replacement = await createResource(
+      env,
+      "link",
+      input(item.slug),
+      crypto.randomUUID(),
+    );
+    expect(await publicLink(env, item.slug)).toBe(replacement.destinationUrl);
+    await expect(
+      updateResource(env, "link", item.id, {
+        ...input("stale-rename"),
+        destinationUrl: "https://example.net/stale",
+        expectedRevision: item.revision,
+      }),
+    ).rejects.toMatchObject({ status: 409, code: "CONFLICT" });
+    expect(await getResource(env, "link", item.id)).toEqual(saved);
+  });
+  it("rolls back destination edits if a rename collides", async () => {
+    const item = await createResource(
+      env,
+      "link",
+      input("rename-source"),
+      crypto.randomUUID(),
+    );
+    await createResource(
+      env,
+      "link",
+      input("rename-taken"),
+      crypto.randomUUID(),
+    );
+    await expect(
+      updateResource(env, "link", item.id, {
+        ...input("rename-taken"),
+        destinationUrl: "https://example.org/not-saved",
+        expectedRevision: item.revision,
+      }),
+    ).rejects.toMatchObject({
+      status: 409,
+      code: "SLUG_TAKEN",
+      fields: { slug: "Choose another address." },
+    });
+    expect(await getResource(env, "link", item.id)).toEqual(item);
+  });
+  it("allows only one concurrent rename to the same address", async () => {
+    const items = await Promise.all(
+      ["rename-first", "rename-second"].map((slug) =>
+        createResource(env, "link", input(slug), crypto.randomUUID()),
+      ),
+    );
+    const results = await Promise.allSettled(
+      items.map((item) =>
+        updateResource(env, "link", item.id, {
+          ...input("rename-winner"),
+          destinationUrl: `https://example.org/${item.slug}`,
+          expectedRevision: item.revision,
+        }),
+      ),
+    );
+    expect(
+      results.filter((result) => result.status === "fulfilled"),
+    ).toHaveLength(1);
+    const loser = results.findIndex((result) => result.status === "rejected");
+    expect(await getResource(env, "link", items[loser]!.id)).toEqual(
+      items[loser],
+    );
+  });
+  it("validates edited addresses and prevents redirects to the new address itself", async () => {
+    const item = await createResource(
+      env,
+      "link",
+      input("rename-loop-before"),
+      crypto.randomUUID(),
+    );
+    for (const slug of ["", "admin", "UPPER", "has/slash"])
+      expect(
+        linkUpdateSchema.safeParse({
+          ...input(slug),
+          expectedRevision: item.revision,
+        }).success,
+      ).toBe(false);
+    await expect(
+      updateResource(env, "link", item.id, {
+        ...input("rename-loop-after"),
+        destinationUrl: "http://localhost:3000/rename-loop-after/?x=1",
+        expectedRevision: item.revision,
+      }),
+    ).rejects.toMatchObject({ status: 400, code: "VALIDATION" });
+    expect(await getResource(env, "link", item.id)).toEqual(item);
+  });
+  it("keeps resource kinds and paste addresses immutable at the database boundary", async () => {
+    const item = await createResource(
+      env,
+      "paste",
+      {
+        title: "Fixed paste",
+        slug: "fixed-paste",
+        state: "draft",
+        expiresAt: null,
+        body: "Content",
+        format: "text",
+      },
+      crypto.randomUUID(),
+    );
+    await expect(
+      env.DB.prepare("UPDATE resources SET slug='changed-paste' WHERE id=?")
+        .bind(item.id)
+        .run(),
+    ).rejects.toThrow("IMMUTABLE_ADDRESS");
+    await expect(
+      env.DB.prepare("UPDATE resources SET kind='link' WHERE id=?")
+        .bind(item.id)
+        .run(),
+    ).rejects.toThrow("IMMUTABLE_ADDRESS");
+  });
   it("allocates a colliding slug only once under concurrent creation", async () => {
     const results = await Promise.allSettled([
       createResource(env, "link", input("collision"), crypto.randomUUID()),
@@ -87,11 +256,7 @@ describe("stable resource lifecycle and atomic writes", () => {
     expect((await getResource(env, "link", resource.id)).destinationUrl).toBe(
       "https://example.net/new",
     );
-    await updateResource(env, "link", resource.id, {
-      ...input("edits"),
-      state: "disabled",
-      expectedRevision: 2,
-    });
+    await deleteResource(env, "link", resource.id, changed.revision);
     expect(await publicResource(env, "link", "edits")).toBeNull();
   });
   it("releases deleted addresses and resolves only the replacement under concurrent reuse", async () => {
@@ -136,14 +301,18 @@ describe("stable resource lifecycle and atomic writes", () => {
     ).rejects.toMatchObject({ status: 409 });
     expect(await publicLink(env, "reusable")).toBe(winner.value.destinationUrl);
   });
-  it("keeps disabled and expired addresses allocated until deletion", async () => {
+  it("keeps legacy disabled and expired addresses allocated until deletion", async () => {
     for (const state of ["disabled", "active"] as const) {
       const item = await createResource(
         env,
         "link",
-        { ...input(`held-${state}`), state },
+        input(`held-${state}`),
         crypto.randomUUID(),
       );
+      if (state === "disabled")
+        await env.DB.prepare("UPDATE resources SET state='disabled' WHERE id=?")
+          .bind(item.id)
+          .run();
       if (state === "active")
         await env.DB.prepare("UPDATE resources SET expires_at=? WHERE id=?")
           .bind(Date.now() - 1, item.id)
@@ -283,42 +452,44 @@ describe("independent visibility and bounded list reads", () => {
   it("changes visibility without overwriting content and rejects stale revisions", async () => {
     const item = await createResource(
       env,
-      "link",
-      input("visibility"),
+      "paste",
+      { ...input("visibility"), body: "Saved content", format: "text" },
       crypto.randomUUID(),
     );
-    const disabled = await changeResourceState(env, "link", item.id, {
+    const disabled = await changeResourceState(env, "paste", item.id, {
       state: "disabled",
       expectedRevision: item.revision,
     });
     expect(disabled).toMatchObject({
       title: item.title,
-      destinationUrl: item.destinationUrl,
+      body: item.body,
       revision: 2,
       state: "disabled",
     });
-    expect(await publicLink(env, item.slug)).toBeNull();
+    expect(await publicResource(env, "paste", item.slug)).toBeNull();
     await expect(
-      changeResourceState(env, "link", item.id, {
+      changeResourceState(env, "paste", item.id, {
         state: "active",
         expectedRevision: item.revision,
       }),
     ).rejects.toMatchObject({ status: 409 });
-    const expired = await updateResource(env, "link", item.id, {
+    const expired = await updateResource(env, "paste", item.id, {
       ...input(item.slug),
+      body: "Saved content",
+      format: "text",
       state: "disabled",
       expiresAt: new Date(0).toISOString(),
       expectedRevision: disabled.revision,
     });
     await expect(
-      changeResourceState(env, "link", item.id, {
+      changeResourceState(env, "paste", item.id, {
         state: "active",
         expectedRevision: expired.revision,
       }),
     ).rejects.toMatchObject({ status: 400 });
-    await deleteResource(env, "link", item.id, expired.revision);
+    await deleteResource(env, "paste", item.id, expired.revision);
     await expect(
-      changeResourceState(env, "link", item.id, {
+      changeResourceState(env, "paste", item.id, {
         state: "active",
         expectedRevision: expired.revision + 1,
       }),

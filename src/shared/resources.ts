@@ -92,6 +92,7 @@ export const commonResourceSchema = z.object({
 });
 export const linkSchema = commonResourceSchema.extend({
   title: commonResourceSchema.shape.title.default(""),
+  state: z.literal("active").default("active"),
   destinationUrl: urlSchema,
 });
 export const pasteSchema = commonResourceSchema.extend({
@@ -133,7 +134,6 @@ export const revisionSchema = z
   .object({ expectedRevision: z.number().int().positive() })
   .strict();
 export const linkUpdateSchema = linkSchema
-  .omit({ slug: true })
   .extend({ expectedRevision: z.number().int().positive() })
   .strict();
 export const pasteUpdateSchema = pasteSchema

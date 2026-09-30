@@ -41,14 +41,12 @@ export function LinkWorkspace({
   creating,
   origin,
   query,
-  state,
 }: {
   page: ResourcePage;
   selected: ResourceDto | null;
   creating: boolean;
   origin: string;
   query: string;
-  state: string;
 }) {
   const [newVersion, setNewVersion] = useState(0);
   const [createdId, setCreatedId] = useState<string | null>(null);
@@ -56,7 +54,7 @@ export function LinkWorkspace({
   const router = useRouter(),
     go = useNavigationGuard();
   function navigate(item?: string, extra?: Record<string, string>) {
-    const params = new URLSearchParams({ q: query, state, ...extra });
+    const params = new URLSearchParams({ q: query, ...extra });
     if (item) params.set("item", item);
     go(() => {
       if (item === "new") {
@@ -109,9 +107,7 @@ export function LinkWorkspace({
             key={query}
             kind="links"
             query={query}
-            state={state}
             onSearch={(q) => navigate(undefined, { q })}
-            onFilter={(state) => navigate(undefined, { state })}
           />
           {page.items.length ? (
             <Table className="resource-table">
@@ -120,7 +116,6 @@ export function LinkWorkspace({
                   <TableHead className="resource-name pl-6 max-sm:pl-4">
                     Address / destination
                   </TableHead>
-                  <TableHead className="resource-state">State</TableHead>
                   <TableHead className="resource-updated">Updated</TableHead>
                 </TableRow>
               </TableHeader>
@@ -138,16 +133,18 @@ export function LinkWorkspace({
                         className="resource-row-button"
                         onClick={() => navigate(item.id)}
                       >
-                        <span className="row-title font-mono">
-                          /{item.slug}
+                        <span className="flex items-center gap-2">
+                          <span className="row-title font-mono">
+                            /{item.slug}
+                          </span>
+                          {item.displayState !== "active" && (
+                            <StatusBadge state={item.displayState} />
+                          )}
                         </span>
                         <span className="row-sub">
                           {item.title} · {item.destinationUrl}
                         </span>
                       </button>
-                    </TableCell>
-                    <TableCell>
-                      <StatusBadge state={item.displayState} />
                     </TableCell>
                     <TableCell className="resource-updated text-muted-foreground font-mono text-xs">
                       <LocalTime value={item.updatedAt} dateOnly />
@@ -158,17 +155,13 @@ export function LinkWorkspace({
             </Table>
           ) : (
             <div className="empty-state">
-              <h2>
-                {query || state !== "all"
-                  ? "No matching links"
-                  : "Create your first link"}
-              </h2>
+              <h2>{query ? "No matching links" : "Create your first link"}</h2>
               <p>
-                {query || state !== "all"
-                  ? "Try another search or filter."
+                {query
+                  ? "Try another search."
                   : "Add a destination URL to get started."}
               </p>
-              {!query && state === "all" && (
+              {!query && (
                 <Button onClick={() => navigate("new")}>
                   <Plus />
                   New link
@@ -224,17 +217,13 @@ function LinkEditor({
     setForm({ ...form, [key]: value });
     setActionKey(crypto.randomUUID());
   };
-  async function save(state = "active") {
+  async function save() {
     const data = {
       title: form.title,
       destinationUrl: form.destinationUrl,
       expiresAt: isoDate(form.expiresAt),
-      state,
-      ...(item
-        ? { expectedRevision: item.revision }
-        : form.slug.trim()
-          ? { slug: form.slug.trim() }
-          : {}),
+      ...(item ? { expectedRevision: item.revision } : {}),
+      ...(form.slug.trim() ? { slug: form.slug.trim() } : {}),
     };
     const saved = await editor.save(() =>
       api<ResourceDto>(
@@ -243,18 +232,6 @@ function LinkEditor({
         data,
         actionKey,
       ),
-    );
-    if (saved) onSaved(saved);
-  }
-  async function changeState(state: "active" | "disabled") {
-    if (!item) return;
-    const saved = await editor.save(
-      () =>
-        api<ResourceDto>(`/api/admin/links/${item.id}/state`, "PATCH", {
-          state,
-          expectedRevision: item.revision,
-        }),
-      true,
     );
     if (saved) onSaved(saved);
   }
@@ -280,7 +257,7 @@ function LinkEditor({
         className="form-stack"
         onSubmit={(e) => {
           e.preventDefault();
-          void save(item?.state ?? "active");
+          void save();
         }}
       >
         <EditorActions
@@ -295,21 +272,12 @@ function LinkEditor({
                 ? "Save changes"
                 : "Create link"}
           </Button>
-          {item && (
-            <Button
-              type="button"
-              variant="outline"
-              disabled={mutation.pending || refreshing}
-              onClick={() =>
-                void changeState(
-                  item.state === "active" ? "disabled" : "active",
-                )
-              }
-            >
-              {item.state === "active" ? "Disable" : "Enable"}
-            </Button>
-          )}
         </EditorActions>
+        {item && item.state !== "active" && (
+          <p className="text-muted-foreground text-sm">
+            This link is unavailable. Save changes to make it live.
+          </p>
+        )}
         {item && <AddressPlate url={item.url} />}
         <FormField
           id="destinationUrl"
@@ -345,28 +313,29 @@ function LinkEditor({
                 onChange={(e) => change("title", e.target.value)}
               />
             </FormField>
-            {!item && (
-              <FormField
-                id="slug"
-                label="Custom address"
-                error={mutation.error?.fields?.slug}
-                help={
-                  form.slug.trim()
+            <FormField
+              id="slug"
+              label="Custom address"
+              error={mutation.error?.fields?.slug}
+              help={
+                item && form.slug.trim() !== item.slug
+                  ? "Changing the address stops the old link and QR code."
+                  : form.slug.trim()
                     ? `${origin}/${form.slug.trim()}`
                     : `Leave blank to generate ${generatedSlugLength} characters.`
-                }
-              >
-                <Input
-                  {...fieldProps("slug", mutation.error?.fields, true)}
-                  value={form.slug}
-                  maxLength={48}
-                  autoCapitalize="none"
-                  spellCheck={false}
-                  placeholder="Automatic"
-                  onChange={(e) => change("slug", e.target.value)}
-                />
-              </FormField>
-            )}
+              }
+            >
+              <Input
+                {...fieldProps("slug", mutation.error?.fields, true)}
+                value={form.slug}
+                required={!!item}
+                maxLength={48}
+                autoCapitalize="none"
+                spellCheck={false}
+                placeholder="Automatic"
+                onChange={(e) => change("slug", e.target.value)}
+              />
+            </FormField>
             <ExpiryField
               showOptionalHint={false}
               value={form.expiresAt}
@@ -392,6 +361,7 @@ function LinkEditor({
       {item && (
         <div className="form-actions mt-6 border-t pt-5">
           <ShareDialog
+            key={item.url}
             url={item.url}
             state={item.displayState}
             disabled={mutation.pending || refreshing}

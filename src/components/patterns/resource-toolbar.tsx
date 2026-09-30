@@ -21,9 +21,9 @@ export function ResourceToolbar({
 }: {
   kind: "links" | "pastes" | "files";
   query: string;
-  state: string;
+  state?: string;
   onSearch: (query: string) => void;
-  onFilter: (state: string) => void;
+  onFilter?: (state: string) => void;
   compact?: boolean;
 }) {
   const [search, setSearch] = useState(query);
@@ -31,6 +31,7 @@ export function ResourceToolbar({
     <form
       className="resource-toolbar"
       data-compact={compact || undefined}
+      data-search-only={!onFilter || undefined}
       role="search"
       aria-label={`${kind} filters`}
       onSubmit={(event) => {
@@ -52,23 +53,25 @@ export function ResourceToolbar({
       <Button variant="outline" type="submit">
         Search
       </Button>
-      <Select value={state} onValueChange={onFilter}>
-        <SelectTrigger
-          aria-label={`Filter ${kind}`}
-          className="state-filter w-full"
-        >
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          {["all", "active", "draft", "disabled", "expired"].map((value) => (
-            <SelectItem key={value} value={value}>
-              {value === "all"
-                ? "All states"
-                : value[0]!.toUpperCase() + value.slice(1)}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
+      {onFilter && (
+        <Select value={state} onValueChange={onFilter}>
+          <SelectTrigger
+            aria-label={`Filter ${kind}`}
+            className="state-filter w-full"
+          >
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {["all", "active", "draft", "disabled", "expired"].map((value) => (
+              <SelectItem key={value} value={value}>
+                {value === "all"
+                  ? "All states"
+                  : value[0]!.toUpperCase() + value.slice(1)}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      )}
     </form>
   );
 }

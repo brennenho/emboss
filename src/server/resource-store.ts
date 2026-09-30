@@ -234,6 +234,10 @@ export async function validateContent(
   input: ContentInput,
   slug: string,
 ) {
+  if (kind === "link" && input.state !== "active")
+    throw new AppError(400, "VALIDATION", "Delete a link to deactivate it.", {
+      state: "Links are live until they expire or are deleted.",
+    });
   const expiry = input.expiresAt ? Date.parse(input.expiresAt) : null;
   if (expiry !== null && expiry <= Date.now() && input.state === "active")
     throw new AppError(400, "VALIDATION", "Choose a future date and time.", {
@@ -390,7 +394,9 @@ export async function updateResource(
   input: ContentInput,
 ) {
   const current = await getResource(env, kind, id);
-  const expiresAt = await validateContent(env, kind, input, current.slug),
+  if (current.revision !== input.expectedRevision) throw conflict();
+  const slug = kind === "link" ? (input.slug ?? current.slug) : current.slug;
+  const expiresAt = await validateContent(env, kind, input, slug),
     now = Date.now();
   const condition =
     "EXISTS(SELECT 1 FROM resources WHERE id=? AND kind=? AND revision=? AND deleted_at IS NULL)";
@@ -417,8 +423,9 @@ export async function updateResource(
     );
   statements.push(
     env.DB.prepare(
-      "UPDATE resources SET title=?,state=?,expires_at=?,revision=revision+1,updated_at=? WHERE id=? AND kind=? AND revision=? AND deleted_at IS NULL RETURNING id",
+      "UPDATE resources SET slug=?,title=?,state=?,expires_at=?,revision=revision+1,updated_at=? WHERE id=? AND kind=? AND revision=? AND deleted_at IS NULL RETURNING id",
     ).bind(
+      slug,
       input.title ||
         (kind === "link"
           ? new URL(input.destinationUrl!).hostname
@@ -435,6 +442,14 @@ export async function updateResource(
   try {
     results = await env.DB.batch(statements);
   } catch (error) {
+    if (
+      String(error).includes(
+        "UNIQUE constraint failed: resources.kind, resources.slug",
+      )
+    )
+      throw new AppError(409, "SLUG_TAKEN", "This address is already in use.", {
+        slug: "Choose another address.",
+      });
     if (String(error).includes("UPLOAD_NOT_READY"))
       throw new AppError(
         409,
@@ -452,6 +467,7 @@ export async function changeResourceState(
   id: string,
   input: { state: "active" | "disabled"; expectedRevision: number },
 ) {
+  if (kind === "link") throw new AppError(404, "NOT_FOUND", "Not found.");
   const current = await getResource(env, kind, id);
   if (current.revision !== input.expectedRevision) throw conflict();
   if (

@@ -258,6 +258,9 @@
   .resource-toolbar[data-compact] .search-input {
     grid-column: 1 / -1;
   }
+  .resource-toolbar[data-search-only] {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
   .resource-table {
     table-layout: fixed;
   }
